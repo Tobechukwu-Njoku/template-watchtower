@@ -55,7 +55,7 @@ jobs:
       mode: ${{ steps.r.outputs.mode }}
       reviewers: ${{ steps.r.outputs.reviewers }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - id: r
@@ -89,7 +89,7 @@ jobs:
       matrix:
         reviewer: ${{ fromJSON(needs.resolve.outputs.reviewers) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Review
@@ -101,7 +101,7 @@ jobs:
           PR: ${{ needs.resolve.outputs.pr }}
           REVIEWER: ${{ matrix.reviewer }}
         run: python3 .github/review/panel.py review --reviewer "$REVIEWER" --pr "$PR" --out "verdicts/$REVIEWER.json" --post
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: verdict-${{ matrix.reviewer }}
@@ -120,10 +120,10 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: needs.resolve.outputs.mode == 'full'
         with:
           pattern: verdict-*
