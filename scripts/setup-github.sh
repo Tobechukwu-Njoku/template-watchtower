@@ -20,7 +20,7 @@ if [ ! -d .git ]; then
   git init -b main
 fi
 git config core.hooksPath .githooks
-chmod +x scripts/*.sh .githooks/* .github/review/*.py
+chmod +x scripts/*.sh .githooks/* team/*.py
 if ! git rev-parse HEAD >/dev/null 2>&1; then
   git add -A
   git commit -m "chore: scaffold project and review pipeline"
@@ -75,7 +75,7 @@ ruleset=$(cat <<'JSON'
           { "context": "PR title" },
           { "context": "Hygiene" },
           { "context": "Build and test" },
-          { "context": "Panel self-test" } ] } }
+          { "context": "Team self-test" } ] } }
   ]
 }
 JSON
@@ -94,9 +94,8 @@ gh api -X PATCH "repos/$repo/code-scanning/default-setup" -f state=configured >/
   || warn "CodeQL default setup not enabled (needs a public repo or GitHub Advanced Security, and a supported language)"
 gh api -X PUT "repos/$repo/private-vulnerability-reporting" >/dev/null 2>&1 || true
 
-say "Reviewer keys (GEMINI_API_KEY is required for the Gemini reviewers; the others are optional)"
-for s in GEMINI_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY; do
-  if gh secret list --repo "$repo" | grep -q "^$s"; then echo "   $s: set"; else echo "   $s: not set - gh secret set $s --repo $repo"; fi
-done
+say "Labels for the team"
+gh label create ready --repo "$repo" --color 0E8A16 --description "Agreed and ready for implementation" --force >/dev/null
+gh label create needs-maintainer --repo "$repo" --color FBCA04 --description "Waiting on a maintainer decision" --force >/dev/null
 
 say "Done: https://github.com/$repo"

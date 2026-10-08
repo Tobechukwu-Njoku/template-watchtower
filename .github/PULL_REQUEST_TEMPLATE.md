@@ -18,13 +18,9 @@ Screenshots or recordings for visible UI changes.
 
 Migration, compatibility, security or operational impact, or "None identified".
 
-## Pre-review
-
-Outcome of the pre-PR review round: clean, or each finding and how it was fixed or rebutted.
-
 ## Provenance
 
-<!-- For the maintainer's records. This section is removed before the review panel reads the PR. -->
+<!-- For the maintainer's records. Removed before reviewers read the PR. -->
 - Tools:
 - Involvement:
 

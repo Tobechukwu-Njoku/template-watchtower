@@ -1,0 +1,52 @@
+{
+  "members": [
+    { "id": "tim-drake",      "name": "Tim Drake",      "role": "implementer", "focus": "Implementation" },
+    { "id": "barbara-gordon", "name": "Barbara Gordon", "role": "reviewer",    "focus": "Security and data protection" },
+    { "id": "lucius-fox",     "name": "Lucius Fox",     "role": "reviewer",    "focus": "Architecture and design" },
+    { "id": "bruce-wayne",    "name": "Bruce Wayne",    "role": "reviewer",    "focus": "Adversarial review" },
+    { "id": "victor-stone",   "name": "Victor Stone",   "role": "reviewer",    "focus": "Verification and tests" },
+    { "id": "james-gordon",   "name": "James Gordon",   "role": "gate",        "focus": "Merge gate" }
+  ],
+
+  "groups": {
+    "team": ["tim-drake", "barbara-gordon", "lucius-fox", "bruce-wayne", "victor-stone"],
+    "reviewers": ["barbara-gordon", "lucius-fox", "bruce-wayne", "victor-stone"]
+  },
+
+  "cadence": {
+    "quiet_check_minutes": 60,
+    "active_check_minutes": 10,
+    "active_window_minutes": 60,
+    "mention_lookback_days": 14
+  },
+
+  "labels": {
+    "ready": "ready",
+    "needs_maintainer": "needs-maintainer",
+    "override": "review-override"
+  },
+
+  "gate": {
+    "status_context": "review/gate",
+    "blocking_severities": ["blocker", "major"],
+    "max_rounds": 3,
+    "trusted_associations": ["OWNER", "MEMBER", "COLLABORATOR"]
+  },
+
+  "diff_exclude_globs": [
+    "*.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "go.sum", "Cargo.lock", "poetry.lock",
+    "*.min.js", "*.min.css", "*.map", "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.pdf",
+    "dist/*", "build/*", "vendor/*", "node_modules/*"
+  ],
+
+  "blind": {
+    "strip_sections": ["Provenance", "AI Disclosure", "AI-use disclosure"],
+    "strip_line_patterns": [
+      "(?i)^\\s*co-authored-by:.*$",
+      "(?i)^\\s*claude-session:.*$",
+      "(?i)^.*generated with \\[?(claude|gemini).*$",
+      "(?i)^.*https://(claude|gemini)\\.(ai|com|google\\.com)/\\S*.*$",
+      "^\\s*🤖.*$"
+    ]
+  }
+}
