@@ -1,0 +1,24 @@
+# Local only
+.env
+.env.*
+!.env.example
+.pr-body.md
+.review/
+verdicts/
+.claude/settings.local.json
+.claude/worktrees/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Build output
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+*.pyc
+.venv/

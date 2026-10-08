@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: What you observed, before any theory about the cause.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps you actually ran.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Raw logs
+      description: Paste, do not summarise. Redact secrets and personal data and mark each redaction.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: textarea
+    id: notes
+    attributes:
+      label: Technical notes
+      description: Root-cause theories go here, after the reproduction.

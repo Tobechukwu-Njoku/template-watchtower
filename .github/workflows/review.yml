@@ -1,0 +1,136 @@
+name: Review
+
+# Runs the review panel on every ready pull request.
+#
+# Security model: pull_request_target runs this file and the panel scripts from
+# the BASE branch, never from the pull request. The PR's code is never checked
+# out or executed - its diff is fetched through the API and read as data. That
+# is what lets the job hold a write token without a PR being able to rewrite
+# its own reviewer.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+# One run per PR; a new push cancels the old run. Ordinary comments and unrelated
+# labels get a throwaway group so they never cancel a review that is in flight.
+concurrency:
+  group: >-
+    review-${{
+      ((github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/review')) ||
+       (contains(fromJSON('["labeled","unlabeled"]'), github.event.action) && github.event.label.name != 'review-override'))
+      && format('noop-{0}', github.run_id)
+      || (github.event.pull_request.number || github.event.issue.number || inputs.pr)
+    }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve
+    # Ready PRs; the override label being added/removed; "/review" from a maintainer; manual runs.
+    if: >-
+      (github.event_name == 'pull_request_target' && !github.event.pull_request.draft &&
+        (!contains(fromJSON('["labeled","unlabeled"]'), github.event.action) || github.event.label.name == 'review-override')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/review') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.r.outputs.pr }}
+      mode: ${{ steps.r.outputs.mode }}
+      reviewers: ${{ steps.r.outputs.reviewers }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - id: r
+        env:
+          PR: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+          ACTION: ${{ github.event.action }}
+          EVENT: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mode=full
+          if [ "$EVENT" = pull_request_target ] && [ "$ACTION" = labeled ]; then mode=gate-only; fi
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "reviewers=$(python3 -c 'import json;print(json.dumps([r["id"] for r in json.load(open(".github/review/config.json"))["reviewers"]]))')" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = full ]; then python3 .github/review/panel.py gate --pr "$PR" --pending; fi
+
+  review:
+    name: Review (${{ matrix.reviewer }})
+    needs: resolve
+    if: needs.resolve.outputs.mode == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      models: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2 # GitHub Models free tier allows 2 concurrent requests on "high" models
+      matrix:
+        reviewer: ${{ fromJSON(needs.resolve.outputs.reviewers) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          REVIEWER: ${{ matrix.reviewer }}
+        run: python3 .github/review/panel.py review --reviewer "$REVIEWER" --pr "$PR" --out "verdicts/$REVIEWER.json" --post
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verdict-${{ matrix.reviewer }}
+          path: verdicts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate:
+    name: Gate
+    needs: [resolve, review]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: needs.resolve.outputs.mode == 'full'
+        with:
+          pattern: verdict-*
+          merge-multiple: true
+          path: verdicts
+      - name: Decide
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ needs.resolve.outputs.pr }}
+        run: python3 .github/review/panel.py gate --pr "$PR" --verdicts verdicts

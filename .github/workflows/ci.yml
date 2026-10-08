@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nothing here needs to write. A token that cannot push is one fewer thing a
+# compromised dependency can reach.
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      # Squash merges use the PR title as the commit subject, so it must be a Conventional Commit.
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - run: scripts/check-hygiene.sh
+
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Toolchains are set up only when the matching manifest exists, so this
+      # job works before any code is written and keeps working as stacks are added.
+      - if: hashFiles('**/package.json') != ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - if: hashFiles('**/go.mod') != ''
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - if: hashFiles('**/pyproject.toml', '**/requirements*.txt') != ''
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: make ci
+
+  panel-selftest:
+    name: Panel self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - run: python3 .github/review/selftest.py

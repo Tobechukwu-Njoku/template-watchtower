@@ -1,0 +1,100 @@
+{
+  "_comment": "Reviewer panel config. Providers are OpenAI-compatible chat endpoints except 'anthropic'. Each reviewer tries its model chain in order and falls back on rate limits or errors.",
+  "providers": {
+    "github-models": {
+      "type": "openai",
+      "url": "https://models.github.ai/inference/chat/completions",
+      "key_env": "GITHUB_TOKEN",
+      "max_input_tokens": 7000,
+      "max_output_tokens": 3000
+    },
+    "gemini": {
+      "type": "openai",
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "key_env": "GEMINI_API_KEY",
+      "max_input_tokens": 120000,
+      "max_output_tokens": 8000
+    },
+    "openrouter": {
+      "type": "openai",
+      "url": "https://openrouter.ai/api/v1/chat/completions",
+      "key_env": "OPENROUTER_API_KEY",
+      "max_input_tokens": 30000,
+      "max_output_tokens": 4000
+    },
+    "anthropic": {
+      "type": "anthropic",
+      "url": "https://api.anthropic.com/v1/messages",
+      "key_env": "ANTHROPIC_API_KEY",
+      "max_input_tokens": 60000,
+      "max_output_tokens": 6000
+    }
+  },
+  "_comment_tiers": "Model tiers. Reviewers point at a tier, so swapping models for a new project is a one-line change per tier. 'reasoning_effort' maps to Gemini thinking_level (low|medium|high).",
+  "tiers": {
+    "deep": [
+      { "provider": "gemini", "model": "gemini-3.1-pro-preview", "reasoning_effort": "high" },
+      { "provider": "gemini", "model": "gemini-3.8-flash", "reasoning_effort": "high" },
+      { "provider": "github-models", "model": "openai/gpt-4.1" }
+    ],
+    "fast": [
+      { "provider": "gemini", "model": "gemini-3.8-flash", "reasoning_effort": "high" },
+      { "provider": "gemini", "model": "gemini-3.1-pro-preview", "reasoning_effort": "high" },
+      { "provider": "github-models", "model": "openai/gpt-4.1-mini" }
+    ],
+    "free": [
+      { "provider": "github-models", "model": "openai/gpt-4.1" },
+      { "provider": "github-models", "model": "openai/gpt-4.1-mini" }
+    ]
+  },
+  "reviewers": [
+    {
+      "id": "barbara-gordon",
+      "name": "Barbara Gordon",
+      "focus": "Security and data protection",
+      "tier": "deep"
+    },
+    {
+      "id": "lucius-fox",
+      "name": "Lucius Fox",
+      "focus": "Architecture and design",
+      "tier": "deep"
+    },
+    {
+      "id": "bruce-wayne",
+      "name": "Bruce Wayne",
+      "focus": "Adversarial review",
+      "tier": "deep"
+    },
+    {
+      "id": "victor-stone",
+      "name": "Victor Stone",
+      "focus": "Verification and tests",
+      "tier": "fast"
+    }
+  ],
+  "gate": {
+    "name": "James Gordon",
+    "status_context": "review/gate",
+    "blocking_severities": ["blocker", "major"],
+    "fail_on_reviewer_error": true,
+    "max_rounds": 3,
+    "override_label": "review-override"
+  },
+  "diff": {
+    "exclude_globs": ["*.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "go.sum", "Cargo.lock", "poetry.lock", "*.min.js", "*.min.css", "*.map", "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.pdf", "dist/*", "build/*", "vendor/*", "node_modules/*"],
+    "max_chunks": 6,
+    "description_max_chars": 4000
+  },
+  "_comment_blind": "Lines and sections stripped from everything reviewers see, so they judge the change, not who or what wrote it. Humans still see the original PR.",
+  "blind": {
+    "strip_sections": ["Provenance", "AI Disclosure", "AI-use disclosure"],
+    "strip_line_patterns": [
+      "(?i)^\\s*co-authored-by:.*$",
+      "(?i)^\\s*claude-session:.*$",
+      "(?i)^.*generated with \\[?claude code.*$",
+      "(?i)^.*https://claude\\.(ai|com)/code.*$",
+      "^\\s*🤖.*$"
+    ]
+  }
+}

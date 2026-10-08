@@ -1,0 +1,7 @@
+# Review requests only. Code-owner approval is not required by the ruleset,
+# because a solo maintainer cannot approve their own pull requests.
+*                    @Tobechukwu-Njoku
+
+# The pipeline itself. Changes here change who reviews what - read them closely.
+/.github/            @Tobechukwu-Njoku
+/scripts/            @Tobechukwu-Njoku
