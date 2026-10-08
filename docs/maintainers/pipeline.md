@@ -5,9 +5,10 @@ This file is for you, not the team. `.claude/settings.json` and `.geminiignore` 
 ## New project from this template
 
 1. On GitHub: **Use this template -> Create a new repository**. Public if you want the merge gate enforced on the free plan.
-2. Clone it and run `scripts/setup-github.sh <repo-name> --public`: merge settings, labels, ruleset, security features.
-3. Update `.github/CODEOWNERS` if the owner differs, fill in "The project" in `AGENTS.md`, and rewrite `README.md`.
-4. Set up the agents on your machine - see [Running the team](#running-the-team).
+2. Install the team's two GitHub Apps on the new repository (create them first if this is your first project - see [Team identities](#team-identities)).
+3. Clone it and run `scripts/setup-github.sh <repo-name> --public`: merge settings, labels, ruleset, security features, and a check that both Apps work.
+4. Update `.github/CODEOWNERS` if the owner differs, fill in "The project" in `AGENTS.md`, and rewrite `README.md`.
+5. Set up the agents on your machine - see [Running the team](#running-the-team).
 
 ## The idea
 
@@ -32,18 +33,44 @@ Provenance is kept for you only. `team.py context`, which reviewers use to read 
 - **Claude writes, Gemini reviews.** No model judges output from its own family.
 - **Pro on judgement-heavy lenses**, Flash on Victor, whose checks are more mechanical.
 - **The gate has no model**, so the merge decision is reproducible and cannot be talked round.
-- No API keys anywhere. Each agent runs in its own CLI under your subscription and talks to GitHub through your `gh` login.
+- No API keys anywhere. Each agent runs under your subscription and talks to GitHub as its own GitHub App, never as you.
 
 ## How they communicate
 
 Everything happens in issue and PR comments, through `team/team.py`:
 
-- Each comment starts with a hidden marker (`<!-- team:comment id=bruce-wayne -->`) and ends with a sign-off. All agents post as your GitHub account, so the marker - not the author - says who wrote it.
+- Each comment starts with a hidden marker (`<!-- team:comment id=bruce-wayne -->`) and ends with a sign-off. The marker says which member wrote it, and it only counts when the comment comes from that member's App (see below).
 - People are addressed with a `To:` line (`To: Barbara Gordon`, `To: reviewers`, `To: maintainer`). Never @handles: those notify real GitHub users.
 - Reviews carry their verdict and findings encoded in the marker, so the gate reads them without parsing prose.
-- Only comments from OWNER/MEMBER/COLLABORATOR accounts (and the workflow bot) count. A stranger cannot forge a review on a public repo.
+- Besides the team, only you and other collaborators can address a member. Strangers' comments are ignored.
 
 **You talk to them the same way.** Comment `To: Tim Drake` on an issue or PR, or label an issue `ready` to hand it to Tim. When an agent needs you it comments `To: maintainer` and adds the `needs-maintainer` label - filter on that label to find your queue.
+
+## Team identities
+
+The team posts through two GitHub Apps, so GitHub itself records who wrote what:
+
+| App (default name) | Used by | Can | Cannot |
+|---|---|---|---|
+| `watchtower-tim-drake` | Tim Drake | push branches, open PRs, comment, read CI results | change workflows, merge into `main`, approve |
+| `watchtower-reviewers` | Barbara, Lucius, Bruce, Victor | read code, comment and label | change code |
+| GitHub Actions | James Gordon | post review requests and the gate result, set `review/gate` | - |
+
+`team.py` accepts a review only from the reviewers' App, a review request or gate result only from GitHub Actions, and a reply as Tim only from Tim's App. Your own account can still talk to the team, but it cannot sign as one of them, and nor can the Apps sign as each other.
+
+**Creating the Apps** (once per GitHub account, reused by every project):
+
+```sh
+make apps        # same as scripts/create-apps.py
+```
+
+For each App your browser opens GitHub's "Create GitHub App" page with the name and permissions filled in. Confirm it; the App ID and private key are saved to `~/.watchtower/apps/` (the key readable by you only), and the installation page opens. Install each App on the repositories the team works in - "Only select repositories" is fine. If a name is taken, change it on GitHub's form; the script writes the new name into `team/config.json` for you to commit.
+
+**Tokens:** before each check, `scripts/watch.sh` asks `team.py token` for a token for that member's App. It lasts one hour and covers this repository only. Tim's Claude Code settings deny reading `~/.watchtower/`, and `team.py token` refuses to run inside an agent, so Tim cannot pick up the reviewers' key. Both keys still live on the same machine: running the team under a separate macOS user that owns `~/.watchtower/` is the stronger setup.
+
+**Merging:** `main` needs `review/gate` and the CI checks, each reported by GitHub Actions itself, plus one approval from a code owner - you. Tim's PRs come from his App, so you can approve them. GitHub does not let you approve your own PRs; for those, the repository admin role may bypass the pull request rules when merging. Nobody can push to `main` directly.
+
+**PRs from outside the team** get no review request: anyone can open a PR on a public repo, and the reviewers would read whatever it contains. Comment `/review` to start a round. Tim never works on a PR he did not open.
 
 ## Check-in schedule
 
@@ -80,7 +107,7 @@ cp ~/code/<repo>-review/docs/maintainers/agents.example.json ~/.watchtower/agent
 */10 * * * * ~/code/<repo>-review/scripts/watch.sh victor-stone
 ```
 
-Requirements: `gh auth login` (used by everyone), `claude` and `gemini` CLIs logged in. Cron jobs get a minimal `PATH` - add a `PATH=...` line at the top of the crontab that includes `gh`, `claude`, `gemini` and `python3`. On macOS, give `cron` Full Disk Access or use a launchd agent. Logs: `~/.watchtower/logs/`.
+Requirements: both Apps created and installed (see [Team identities](#team-identities)), `gh`, `openssl` and `python3` on the `PATH`, `claude` and `gemini` CLIs logged in. Your own `gh auth login` is used only by the setup scripts; the agents use their Apps' tokens. Cron jobs get a minimal `PATH` - add a `PATH=...` line at the top of the crontab that includes `gh`, `claude`, `gemini` and `python3`. On macOS, give `cron` Full Disk Access or use a launchd agent. Logs: `~/.watchtower/logs/`.
 
 Set **High** thinking in each tool's own settings - the CLI flags above choose the model only.
 
@@ -94,10 +121,13 @@ Test one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/lo
 - Findings citing files outside the PR are dropped as phantoms.
 - After 3 rounds with blockers standing, the gate says it needs your decision.
 - **Your override:** the `review-override` label turns the gate green and records it. Removing it re-runs the gate.
+- **Your approval** is required as well: a green gate makes a PR ready for you, not merged.
 
 ## Security model
 
 - `review.yml` uses `pull_request_target`, so the workflow and `team/team.py` run from `main`. PR code is never checked out or executed in that job; a PR cannot edit its own gate.
+- Every member has its own GitHub identity, and the gate checks it (see [Team identities](#team-identities)). The required checks are accepted only from GitHub Actions, so nobody can mark `review/gate` green by hand.
+- Actions are pinned to commit SHAs, so a moved tag cannot change what runs. Dependabot proposes updates.
 - Reviewers read PRs as data: `team.py context` shows the diff, and the briefs forbid checking out or running the branch.
 - `.gemini/settings.json` limits the Gemini agents' tools to reading files, writing their review file, `team.py`, read-only `git` and `gh` view commands. That restriction is what makes `--approval-mode yolo` acceptable for reviewers: a prompt injection in a diff has very little to work with. Verify the tool names against your Gemini CLI version.
 - Tim's `--allowedTools` list in `agents.json` keeps him to git, gh, make and file edits. `.claude/settings.json` blocks force-push and `gh pr merge`.
@@ -108,9 +138,9 @@ Test one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/lo
 
 - **Partial blindness for every agent.** Claude Code and Gemini CLI each tell their model what it is in their own system prompt. The handbook, briefs and stripped provenance are best-effort framing on top.
 - **Rulesets** are only enforced on public repos or paid plans.
-- **Dependabot PRs** run `pull_request_target` with a read-only token, so no review request is posted. Review them yourself and apply `review-override`.
+- **Dependabot PRs** get no review request. Review them yourself, approve, and merge (or apply `review-override` first if you want the gate green).
 - **Gemini model IDs** `gemini-3.1-pro-preview` and `gemini-3.8-flash` are the best-known names, not confirmed here - check them in `gemini` before the first run.
-- Everything posts as your account, so GitHub will not notify you of the agents' comments. Watch the `needs-maintainer` label instead.
+- Agents' comments come from their Apps, so GitHub notifies you as it would for any collaborator. The `needs-maintainer` label is still the quickest way to find your queue.
 
 ## Free resources used or worth borrowing from
 
