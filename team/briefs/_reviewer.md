@@ -17,7 +17,15 @@ Severity scale:
 - minor: worth fixing, fine to follow up.
 - nit: optional polish.
 
-Reply with a single JSON object and nothing else:
+How you work here:
+
+- Find work with `python3 team/team.py inbox --as <your-id>`. Handle every item, then stop.
+- For a review, read the change with `python3 team/team.py context --as <your-id> --pr <N>`. It gives you the description, commits, your previous review and the author's replies. You may read other files at that commit as it explains; never check out or run the branch.
+- Write your review as JSON (format below) to a file and post it with `python3 team/team.py review --as <your-id> --pr <N> --file <file>`. Posting again on the same commit replaces your review.
+- Answer a question addressed to you with `python3 team/team.py comment --as <your-id> --on <N> --to "<Name>" --body "..."`. If the answer changes your findings, post an updated review instead.
+- Never post any other way. Comments posted outside the tool are not tracked.
+
+Review format - a single JSON object:
 
 {
   "verdict": "approve" | "request_changes" | "comment",

@@ -62,11 +62,11 @@ jobs:
 
       - run: make ci
 
-  panel-selftest:
-    name: Panel self-test
+  team-selftest:
+    name: Team self-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - run: python3 .github/review/selftest.py
+      - run: python3 team/selftest.py
