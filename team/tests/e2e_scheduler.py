@@ -91,4 +91,29 @@ check("Tim's claim was posted by his App", any(c["user"]["login"] == TIM and "Pi
 tok = (tmp / "claude.json.token").read_text()
 check("Tim cannot mint a reviewer's token", not tok.startswith("0") and "not for a running agent" in tok)
 
+# Every member's job starts at the same moment in the scheduler's own clone: they must take
+# turns pulling, and the clone must end up on the new commit.
+# A remote with just main and watch.sh, like GitHub's default branch: the scheduler clone tracks main.
+git_ = lambda *a: subprocess.run(["git", *a], check=True, capture_output=True)
+remote, seed, sched = tmp / "remote.git", tmp / "seed", HOME / "clones" / "o__r" / "scheduler"
+git_("init", "-q", "--bare", "-b", "main", str(remote))
+git_("init", "-q", "-b", "main", str(seed))
+(seed / "scripts").mkdir()
+(seed / "scripts" / "watch.sh").write_text((ROOT / "scripts" / "watch.sh").read_text())
+git_("-C", str(seed), "add", "-A")
+git_("-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "start")
+git_("-C", str(seed), "push", "-q", str(remote), "main")
+git_("clone", "-q", str(remote), str(sched))
+git_("-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "newer")
+git_("-C", str(seed), "push", "-q", str(remote), "main")
+env = dict(os.environ, WATCHTOWER_HOME=str(HOME), GITHUB_API_URL="http://127.0.0.1:9")  # token fails fast after the pull
+procs = [subprocess.Popen(["/bin/bash", str(sched / "scripts/watch.sh"), m], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+         for m in ("tim-drake", "barbara-gordon", "lucius-fox", "bruce-wayne", "victor-stone")]
+for pr in procs:
+    pr.wait()
+logs = "".join(f.read_text() for f in (HOME / "logs").glob("o__r-scheduler-*.log"))
+head = lambda d, ref: subprocess.run(["git", "-C", str(d), "rev-parse", ref], capture_output=True, text=True).stdout.strip()
+check("five members starting at once take turns pulling", "pull failed" not in logs and "fatal" not in logs and "skipped git pull" not in logs)
+check("the scheduler's clone ends up on the newest commit", head(sched, "HEAD") == head(seed, "HEAD"))
+
 print(f"\n{'all passed' if not fails else f'{fails} failed'}"); sys.exit(1 if fails else 0)

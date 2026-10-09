@@ -37,8 +37,26 @@ main() {
 
   cd "$root" || return 1
   # The scheduler's own clone keeps itself current. A clone you work in is left alone.
+  # Every member's job starts at the same moment and shares this clone, so they take
+  # turns: simultaneous pulls in one clone fail ("Cannot fast-forward to multiple
+  # branches"). A pull lock older than 5 minutes is from a crashed run.
   case "$root" in
-    "$home"/clones/*) git pull -q --ff-only >>"$log" 2>&1 || echo "git pull failed in $root" >>"$log" ;;
+    "$home"/clones/*)
+      pull_lock="$home/locks/$name-pull"
+      find "$pull_lock" -maxdepth 0 -mmin +5 -exec rmdir {} \; 2>/dev/null
+      waited=0
+      until mkdir "$pull_lock" 2>/dev/null; do
+        waited=$((waited + 1))
+        [ "$waited" -ge 120 ] && break
+        sleep 0.5
+      done
+      if [ "$waited" -lt 120 ]; then
+        git pull -q --ff-only >>"$log" 2>&1 || echo "git pull failed in $root" >>"$log"
+        rmdir "$pull_lock"
+      else
+        echo "skipped git pull: another member held the pull lock for a minute" >>"$log"
+      fi
+      ;;
   esac
 
   GH_TOKEN="$(python3 team/team.py token --as "$id" 2>>"$log")" || return 0
