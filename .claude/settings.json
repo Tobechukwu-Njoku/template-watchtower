@@ -1,9 +1,6 @@
 {
-  "model": "claude-opus-5-5",
   "permissions": {
     "deny": [
-      "Read(~/.watchtower/**)",
-      "Edit(~/.watchtower/**)",
       "Read(./docs/maintainers/**)",
       "Edit(./docs/maintainers/**)",
       "Bash(cat docs/maintainers:*)",

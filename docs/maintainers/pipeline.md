@@ -23,7 +23,7 @@ Provenance is kept for you only. `team.py` builds every reviewer prompt and stri
 
 | Name | Role | Tool and model | Woken by |
 |---|---|---|---|
-| Tim Drake | Implementer | Claude Code - Claude Opus 5.5 (Ultra) | `ready` issues, failed gate, `To:` mentions |
+| Tim Drake | Implementer | Claude Code - Claude Sonnet 5.5, your Claude Pro login | `ready` issues, failed gate, `To:` mentions |
 | Barbara Gordon | Security and data protection | Antigravity - Gemini 3.1 Pro (High), Google account 1 | Review requests, `To:` mentions |
 | Lucius Fox | Architecture and design | Antigravity - Gemini 3.1 Pro (High), Google account 1 | Review requests, `To:` mentions |
 | Bruce Wayne | Adversarial review | Antigravity - Gemini 3.1 Pro (High), Google account 2 | Review requests, `To:` mentions |
@@ -66,7 +66,7 @@ make apps        # same as scripts/create-apps.py
 
 For each App your browser opens GitHub's "Create GitHub App" page with the name and permissions filled in. Confirm it; the App ID and private key are saved to `~/.watchtower/apps/` (the key readable by you only), and the installation page opens. Install each App on the repositories the team works in - "Only select repositories" is fine. If a name is taken, change it on GitHub's form; the script writes the new name into `team/config.json` for you to commit.
 
-**Tokens:** before each check, `scripts/watch.sh` asks `team.py token` for a token for that member's App. It lasts one hour and covers this repository only. Tim's Claude Code settings deny reading `~/.watchtower/`, and `team.py token` refuses to run inside an agent, so Tim cannot pick up the reviewers' key. Both keys still live on the same machine: running the team under a separate macOS user that owns `~/.watchtower/` is the stronger setup.
+**Tokens:** before each check, `scripts/watch.sh` asks `team.py token` for a token for that member's App. It lasts one hour and covers this repository only. Tim's settings deny reading `~/.watchtower/apps/` and `~/.watchtower/google/`, and `team.py token` refuses to run inside an agent, so Tim cannot pick up the reviewers' key. Both keys still live on the same machine: running the team under a separate macOS user that owns `~/.watchtower/` is the stronger setup.
 
 **Merging:** `main` needs `review/gate` and the CI checks, each reported by GitHub Actions itself, plus one approval from a code owner - you. Tim's PRs come from his App, so you can approve them. GitHub does not let you approve your own PRs; for those, the repository admin role may bypass the pull request rules when merging. Nobody can push to `main` directly.
 
@@ -102,39 +102,40 @@ A browser window opens for Google's sign-in, and the command prints which addres
 
 Drops back to hourly after 60 quiet minutes. All numbers are in `team/config.json` under `cadence`.
 
-**Adjustment from "ask each agent to check":** having every agent wake on a timer and look for itself would spend model time on every empty check - up to 6 agents x 6 checks an hour while active. Instead `scripts/watch.sh` runs every 10 minutes from cron or launchd, applies the schedule (`team.py tick`), and only then looks for work: for a reviewer, `team.py run` handles the inbox itself; for Tim, `team.py inbox` is asked first and Claude Code launched only if there is something. An idle check costs a few GitHub API calls and no model time. The agents still see the schedule in `AGENTS.md`, so if you prefer to run them from their own scheduled tasks instead, they follow the same rules.
+**Adjustment from "ask each agent to check":** having every agent wake on a timer and look for itself would spend model time on every empty check - up to 6 agents x 6 checks an hour while active. Instead `scripts/watch.sh` runs every 10 minutes, applies the schedule (`team.py tick`), and only then runs `team.py run`, which looks at the member's inbox and calls a model only if there is something in it. An idle check costs a few GitHub API calls and no model time. Within one check each thread is fetched once and reused; each App has its own hourly GitHub allowance, so the four reviewers share one and Tim has another. The agents still see the schedule in `AGENTS.md`, so if you prefer to run them from their own scheduled tasks instead, they follow the same rules.
 
 Expected latency: up to an hour for the first response when the repo has been quiet, 10-20 minutes per step once work is under way. A full review round usually lands within one active cycle, because the review request itself makes the repo active.
 
 ## Running the team
 
-On the machine that will host the agents:
+On the Mac that will host the team, from a clone of the repository:
 
 ```sh
-# 1. Clones: one for Tim to work in, one the scheduler runs from (the reviewers need no clone of their own)
-git clone https://github.com/<owner>/<repo> ~/code/<repo>-tim
-git clone https://github.com/<owner>/<repo> ~/code/<repo>-review
+# 1. Tim uses your Claude Pro login. For a background job, make a long-lived login
+#    and save it where the scheduler finds it (the token is printed once; copy it):
+claude setup-token
+pbpaste > ~/.watchtower/claude-token && chmod 600 ~/.watchtower/claude-token
 
-# 2. Launch config
-mkdir -p ~/.watchtower
-cp ~/code/<repo>-review/docs/maintainers/agents.example.json ~/.watchtower/agents.json
-#    edit: replace PROJECT with <repo>, check the CLI flags against your installed Claude Code
+# 2. Sign in the reviewers' Google accounts (see "How reviews run")
+python3 team/team.py google-login --account google-1
+python3 team/team.py google-login --account google-2
 
-# 3. Sign in the reviewers' Google accounts (see "How reviews run")
-python3 ~/code/<repo>-review/team/team.py google-login --account google-1
-python3 ~/code/<repo>-review/team/team.py google-login --account google-2
-
-# 4. Schedule (crontab -e). Every 10 minutes; watch.sh decides whether it is time.
-*/10 * * * * ~/code/<repo>-review/scripts/watch.sh tim-drake
-*/10 * * * * ~/code/<repo>-review/scripts/watch.sh barbara-gordon
-*/10 * * * * ~/code/<repo>-review/scripts/watch.sh lucius-fox
-*/10 * * * * ~/code/<repo>-review/scripts/watch.sh bruce-wayne
-*/10 * * * * ~/code/<repo>-review/scripts/watch.sh victor-stone
+# 3. Turn the schedule on: one launchd job per member, every 10 minutes
+scripts/schedule-mac.sh install
+scripts/schedule-mac.sh status
 ```
 
-Requirements: both Apps created and installed (see [Team identities](#team-identities)), `gh`, `openssl` and `python3` on the `PATH`, `claude` logged in, T3 Code installed with its Antigravity connector downloaded, and both Google accounts signed in. Your own `gh auth login` is used only by the setup scripts; the agents use their Apps' tokens. Cron jobs get a minimal `PATH` - add a `PATH=...` line at the top of the crontab that includes `gh`, `claude`, `openssl` and `python3`. On macOS, give `cron` Full Disk Access or use a launchd agent. Logs: `~/.watchtower/logs/`.
+`schedule-mac.sh install` clones the repository for the scheduler into `~/.watchtower/clones/<owner>__<repo>/scheduler/` and points the jobs there; `watch.sh` keeps that clone up to date with `main`, so merged changes to the team take effect on the next check. The jobs never touch the clone you work in, and macOS does not let background jobs into your Documents folder anyway. They run inside your login session, record your current `PATH`, and pause while the Mac sleeps. `scripts/schedule-mac.sh uninstall` removes them.
 
-Test one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/logs/*barbara-gordon.log`. To force a check, delete `~/.watchtower/<owner>__<repo>/<id>.json`.
+Tim works in his own clone, `~/.watchtower/clones/<owner>__<repo>/tim-drake/`, created on his first check. It commits as his App's bot and pushes with his App's one-hour token: its git config clears any other credential helper first (Apple's command line tools add the macOS keychain), so a push can never use your own GitHub login.
+
+Without a saved token in `~/.watchtower/claude-token`, Tim falls back to Claude Code's normal login, which expires and needs `claude auth login` again.
+
+Requirements: both Apps created and installed (see [Team identities](#team-identities)), `gh`, `git`, `openssl`, `python3` and `claude` on the `PATH`, T3 Code installed with its Antigravity connector downloaded. Your own `gh auth login` is used only by the setup scripts.
+
+**Linux** (for example a Proxmox VM): the same `watch.sh` runs from a systemd user timer. Put the Claude token and Google logins in place as above, then for each member a `watchtower@.service` with `ExecStart=/bin/bash %h/.watchtower/clones/<owner>__<repo>/scheduler/scripts/watch.sh %i` and a `watchtower@.timer` with `OnUnitActiveSec=10min`, enabled as `watchtower@barbara-gordon.timer` and so on. The Antigravity connector must have a Linux build for this; that is not confirmed.
+
+Check one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/logs/*barbara-gordon.log`. To force a check before the schedule says so, delete `~/.watchtower/<owner>__<repo>/<id>.json`. Logs: `~/.watchtower/logs/`.
 
 ## Gate rules
 
@@ -152,7 +153,8 @@ Test one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/lo
 - Every member has its own GitHub identity, and the gate checks it (see [Team identities](#team-identities)). The required checks are accepted only from GitHub Actions, so nobody can mark `review/gate` green by hand.
 - Actions are pinned to commit SHAs, so a moved tag cannot change what runs. Dependabot proposes updates.
 - Reviewers have no tools. The connector runs in an empty folder and every tool request is refused, so instructions planted in a PR can at most mislead a review, which the other three reviewers and you still read. The brief tells them to report such instructions as a finding.
-- Tim's `--allowedTools` list in `agents.json` keeps him to git, gh, make and file edits. `.claude/settings.json` blocks force-push and `gh pr merge`.
+- Tim runs Claude Code with `--permission-mode dontAsk`, which refuses anything not allowed in `implementing.allow` in `team/config.json`: git (no force-push, no branch deletion, no skipping hooks), read-only `gh` commands, `make`, the team tool, and edits inside his own clone. No `gh api`, no web access, no reading the App keys, Google logins or your credentials. Your personal Claude Code settings are not loaded (`--setting-sources project`), and no transcript is kept (`--no-session-persistence`). Claude Code's credit lines in commits and PRs are off.
+- `make` and the tests run code Tim writes, so he can still run anything he can write into a Makefile. His own clone, his App's one-hour token and the deny list limit what that reaches; a separate macOS user for the team is the stronger setup.
 - `ci.yml` runs PR code with a read-only token and no secrets.
 - Changes to `.github/`, `team/` and `scripts/` only take effect after they merge - review those PRs yourself.
 

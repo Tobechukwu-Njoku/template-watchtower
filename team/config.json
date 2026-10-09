@@ -58,6 +58,30 @@
     "max_parts": 4
   },
 
+  "_implementing": "How the scheduler runs Tim: Claude Code under your Claude Pro login, in his own clone, refusing anything not listed here. The deny list keeps him away from the App keys, the Google logins, the scheduler's own clone and your credentials. Add the commands your stack needs to extra_allow, for example \"Bash(npm test *)\".",
+  "implementing": {
+    "model": "claude-sonnet-5-5",
+    "timeout_minutes": 90,
+    "allow": [
+      "Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(git rev-parse *)",
+      "Bash(git add *)", "Bash(git rm *)", "Bash(git mv *)", "Bash(git restore *)", "Bash(git stash *)",
+      "Bash(git commit *)", "Bash(git switch *)", "Bash(git checkout *)", "Bash(git branch *)",
+      "Bash(git fetch *)", "Bash(git pull *)", "Bash(git merge *)", "Bash(git push *)",
+      "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)", "Bash(gh pr list *)",
+      "Bash(gh issue view *)", "Bash(gh issue list *)", "Bash(gh run view *)", "Bash(gh run list *)",
+      "Bash(make *)", "Bash(python3 team/team.py *)", "Bash(ls *)"
+    ],
+    "deny": [
+      "Bash(git push -f*)", "Bash(git push * -f*)", "Bash(git push *--force*)", "Bash(git push *--delete*)",
+      "Bash(git push * +*)", "Bash(git commit *--no-verify*)",
+      "WebFetch", "WebSearch",
+      "Read(~/.watchtower/apps/**)", "Edit(~/.watchtower/apps/**)", "Read(~/.watchtower/google/**)",
+      "Edit(~/.watchtower/google/**)", "Edit(~/.watchtower/clones/*/scheduler/**)",
+      "Read(~/.ssh/**)", "Read(~/.config/gh/**)", "Read(~/.claude/**)", "Read(~/.gnupg/**)", "Read(~/.aws/**)"
+    ],
+    "extra_allow": []
+  },
+
   "_reviewing": "Each reviewer is one question to Gemini through Antigravity's connector, signed in to one of your Google accounts (team.py google-login). Model values are the connector's own names: gemini-pro-agent is Gemini 3.1 Pro (High).",
   "reviewing": {
     "members": {

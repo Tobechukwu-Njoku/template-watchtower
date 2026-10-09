@@ -10,7 +10,8 @@ standard library only.
   team.py context --as ID --pr N                 exactly what a reviewer is sent for a PR
   team.py review  --as ID --pr N --file F.json   post a review from a file
   team.py comment --as ID --on N (--body T | --body-file F) [--to "A, B"] [--needs-maintainer]
-  team.py run     --as ID                        reviewers: handle the inbox through Antigravity
+  team.py run     --as ID                        scheduler: handle ID's inbox (reviewers via Antigravity, Tim via Claude Code)
+  team.py pr      --as ID --title T --body-file F  open a PR from the current branch
   team.py google-login --account A               sign a Google account in for its reviewers
   team.py token   --as ID                        scheduler: a one-hour GitHub token for ID's App
   team.py request --pr N [--force]               CI: ask reviewers for a round
@@ -232,8 +233,16 @@ def dec(s: str):
 # --------------------------------------------------------------------------- GitHub access
 
 class GH:
+    """GitHub through `gh api`. GET results are reused until the next write (or clear()),
+    so one check fetches each thread once however many steps read it."""
+
     def __init__(self, repo: str | None = None):
         self.repo = repo or os.environ.get("GITHUB_REPOSITORY") or self._detect()
+        self._cache: dict = {}
+        self.calls = 0
+
+    def clear(self) -> None:
+        self._cache.clear()
 
     @staticmethod
     def _detect() -> str:
@@ -250,6 +259,12 @@ class GH:
         return out.stdout.strip()
 
     def api(self, path: str, method: str = "GET", body: dict | None = None, accept: str | None = None) -> str:
+        key = (path, accept)
+        if method == "GET" and key in self._cache:
+            return self._cache[key]
+        if method != "GET":
+            self._cache.clear()
+        self.calls += 1
         cmd = ["gh", "api", "-X", method, path if path.startswith("/") else f"/repos/{self.repo}/{path}"]
         if accept:
             cmd += ["-H", f"Accept: {accept}"]
@@ -259,6 +274,8 @@ class GH:
                              capture_output=True, text=True)
         if out.returncode != 0:
             raise RuntimeError(f"gh api {method} {path}: {out.stderr.strip()[:300]}")
+        if method == "GET":
+            self._cache[key] = out.stdout
         return out.stdout
 
     def get(self, path: str):
@@ -815,10 +832,12 @@ def asker(conn, model: str, timeout: float):
 
 
 def cmd_run(a) -> int:
-    """A reviewer's check-in: handle everything in their inbox, then stop."""
+    """A member's check-in: handle everything in their inbox, then stop."""
     me = a.as_
+    if MEMBERS[me]["role"] == "implementer":
+        return run_implementer(me)
     if MEMBERS[me]["role"] != "reviewer":
-        sys.exit(f"{me} is not a reviewer")
+        sys.exit(f"{me} has no check-in: the gate runs in GitHub Actions")
     gh = GH()
     items = gather_inbox(gh, me)
     if not items:
@@ -831,6 +850,7 @@ def cmd_run(a) -> int:
         ask = asker(conn, rc["model"], timeout)
         for it in items:
             n = it["number"]
+            gh.clear()  # fresh data for each item, reused within it
             try:
                 comments = gh.comments(n)
                 reviewed = any(kind(c) == "review" and by(c) == me for c in comments)
@@ -914,6 +934,137 @@ def cmd_google_login(a) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- Tim, through Claude Code
+
+def clone_path(repo: str, member_id: str) -> Path:
+    return wt_home() / "clones" / repo.replace("/", "__") / member_id
+
+
+def git(path: Path, *args: str, check: bool = True) -> str:
+    out = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True)
+    if check and out.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {out.stderr.strip()[:300]}")
+    return out.stdout.strip()
+
+
+# Git asks this for credentials, and it answers with the member's App token from the
+# environment. Nothing is stored, and the token lasts an hour.
+CREDENTIAL_HELPER = '!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f'
+
+
+def bot_user_id(gh: GH, slug: str) -> int:
+    try:
+        meta = json.loads((wt_home() / "apps" / f"{slug}.json").read_text())
+        if meta.get("bot_user_id"):
+            return int(meta["bot_user_id"])
+    except (OSError, ValueError):
+        pass
+    return int(gh.get(f"/users/{urllib.parse.quote(slug + '[bot]')}")["id"])
+
+
+def ensure_clone(gh: GH, member_id: str) -> Path:
+    """The member's own clone, under ~/.watchtower so background jobs may use it, set up to
+    commit and push as the member's App and nobody else."""
+    path = clone_path(gh.repo, member_id)
+    if not (path / ".git").exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        url = os.environ.get("WATCHTOWER_CLONE_URL") or f"https://github.com/{gh.repo}.git"
+        out = subprocess.run(["git", "clone", "-q", url, str(path)], capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"could not clone {url}: {out.stderr.strip()[:300]}")
+    slug = CFG["apps"][MEMBERS[member_id]["app"]]["slug"]
+    git(path, "config", "user.name", f"{slug}[bot]")
+    git(path, "config", "user.email", f"{bot_user_id(gh, slug)}+{slug}[bot]@users.noreply.github.com")
+    # An empty helper first clears any your system or user git config adds (such as the
+    # macOS keychain), so a push can never fall back to your own GitHub login.
+    git(path, "config", "--replace-all", "credential.helper", "")
+    git(path, "config", "--add", "credential.helper", CREDENTIAL_HELPER)
+    git(path, "config", "core.hooksPath", ".githooks")
+    git(path, "fetch", "-q", "--prune", "origin")
+    if git(path, "branch", "--show-current") == "main" and not git(path, "status", "--porcelain"):
+        git(path, "merge", "-q", "--ff-only", "origin/main")
+    return path
+
+
+def claude_settings(clone: Path) -> dict:
+    """Tim's permissions. With --permission-mode dontAsk anything not allowed here is refused;
+    reading files inside the clone needs no rule, and edits are allowed there only."""
+    cfg = CFG["implementing"]
+    return {"permissions": {"allow": cfg["allow"] + cfg["extra_allow"] + [f"Edit(/{clone.resolve()}/**)"],
+                            "deny": cfg["deny"]},
+            "attribution": {"commit": "", "pr": "", "sessionUrl": False},
+            "autoMemoryEnabled": False}
+
+
+def claude_command(clone: Path, prompt: str) -> list[str]:
+    return ["claude", "-p", prompt, "--model", CFG["implementing"]["model"],
+            "--permission-mode", "dontAsk",         # refuse whatever is not allowed, never ask
+            "--setting-sources", "project",         # the repo's settings, not your personal ones
+            "--settings", json.dumps(claude_settings(clone)),
+            "--no-session-persistence"]             # keep no transcript on disk
+
+
+def claude_env(me: str) -> dict:
+    """Tim's environment: the scheduler's, minus Claude settings inherited from any Claude
+    session you started this from (they can switch off the normal login), plus the
+    long-lived login from `claude setup-token` if you saved one to ~/.watchtower/claude-token."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "ANTHROPIC"))}
+    env["WATCHTOWER_AGENT"] = me  # GH_TOKEN, his own App's, is kept
+    token = wt_home() / "claude-token"
+    if token.exists():
+        value = "".join(token.read_text().split())  # a token copied across a line break still works
+        if value.startswith("sk-ant-"):
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = value
+        else:
+            print(f"! {token} does not hold a Claude login token (they start with sk-ant-oat). "
+                  "Run `claude setup-token` and save only the token it prints. Using Claude Code's normal login.",
+                  file=sys.stderr)
+    return env
+
+
+def run_implementer(me: str) -> int:
+    gh = GH()
+    items = gather_inbox(gh, me)
+    if not items:
+        print("nothing to do")
+        return 0
+    clone = ensure_clone(gh, me)
+    name = MEMBERS[me]["name"]
+    prompt = (f"You are {name}. It is time for your scheduled check on this repository. Read AGENTS.md and your "
+              f"brief (python3 team/team.py brief --as {me}), then run python3 team/team.py inbox --as {me} and "
+              "handle every item in it. Post only through team/team.py, and open pull requests with "
+              f"python3 team/team.py pr --as {me}. Stop when your inbox is empty.")
+    env = claude_env(me)
+    print(f"{len(items)} item(s); starting Claude Code ({CFG['implementing']['model']}) in {clone}", flush=True)
+    try:
+        r = subprocess.run(claude_command(clone, prompt), cwd=clone, env=env,
+                           timeout=CFG["implementing"]["timeout_minutes"] * 60)
+    except subprocess.TimeoutExpired:
+        print("stopped: took longer than implementing.timeout_minutes", file=sys.stderr)
+        return 1
+    return r.returncode
+
+
+def cmd_pr(a) -> int:
+    """Open a pull request from the current branch, signed, as the member's App."""
+    m = MEMBERS[a.as_]
+    gh = GH()
+    here = Path.cwd()
+    branch = git(here, "branch", "--show-current")
+    base = gh.get(f"/repos/{gh.repo}")["default_branch"]
+    if not branch or branch == base:
+        sys.exit(f"switch to your feature branch first (you are on {branch or 'a detached HEAD'})")
+    if not git(here, "ls-remote", "--heads", "origin", branch, check=False):
+        sys.exit(f"push the branch first: git push -u origin {branch}")
+    body = Path(a.body_file).read_text().rstrip()
+    sign = f"- {m['name']}"
+    if not body.endswith(sign):
+        body += f"\n\n{sign}"
+    pr = json.loads(gh.api("pulls", "POST", {"title": a.title, "head": branch, "base": base, "body": body + "\n"}))
+    print(pr["html_url"])
+    return 0
+
+
 def cmd_request(a) -> int:
     gh = GH()
     pr = gh.get(f"pulls/{a.pr}")
@@ -988,6 +1139,7 @@ def main() -> int:
     p("token")
     p("run")
     lg = p("google-login", who=False); lg.add_argument("--account", required=True)
+    pr = p("pr"); pr.add_argument("--title", required=True); pr.add_argument("--body-file", required=True)
     q = p("request", who=False); q.add_argument("--pr", type=int, required=True)
     q.add_argument("--force", action="store_true", help="request even for a PR from outside the team")
     g = p("gate", who=False); g.add_argument("--pr", type=int, required=True)

@@ -27,12 +27,13 @@ Otherwise claim it, so it leaves your inbox and the team knows it is taken:
 python3 team/team.py comment --as tim-drake --on <N> --body "Picked up. Branch: <prefix>/<N>-<slug>."
 ```
 
-## 2. Branch off fresh main, in your own worktree
+## 2. Branch off fresh main
+
+You work in your own clone of the repository; stay inside it.
 
 ```sh
 git fetch origin
-git worktree add -b <prefix>/<N>-<slug> ../wt-<N> origin/main
-cd ../wt-<N>
+git switch -c <prefix>/<N>-<slug> origin/main
 ```
 
 ## 3. Confirm - a hard gate
@@ -56,15 +57,15 @@ Run the full gate, not just your test. Keep the output - it goes in the PR. If i
 
 ## 6. Open the PR
 
-Write the description from `.github/PULL_REQUEST_TEMPLATE.md` to `.pr-body.md`: Problem, Approach, Validation (real output), Risks. End with `Closes #<N>` and `- Tim Drake`.
+Write the description from `.github/PULL_REQUEST_TEMPLATE.md` to `.pr-body.md`: Problem, Approach, Validation (real output), Risks. End with `Closes #<N>`; your sign-off is added for you. Keep `.pr-body.md` out of your commits.
 
 ```sh
 git push -u origin HEAD
-gh pr create --base main --title "<conventional subject>" --body-file .pr-body.md
+python3 team/team.py pr --as tim-drake --title "<conventional subject>" --body-file .pr-body.md
 ```
 
 Open it ready, not draft - that is what sends the review request. Attach screenshots for UI changes or say they are still needed.
 
 ## 7. Hand over
 
-The reviewers pick it up on their next check. You will see it in your inbox again only if the gate fails or someone addresses you. Stop here.
+The reviewers pick it up on their next check. You will see it in your inbox again only if the gate fails or someone addresses you. Switch back to `main` (`git switch main`) and stop here.
