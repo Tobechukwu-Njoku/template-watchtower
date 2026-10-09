@@ -308,6 +308,10 @@ with tempfile.TemporaryDirectory() as d:
               "CLAUDE_CODE_SIMPLE" not in e1 and "ANTHROPIC_BASE_URL" not in e1 and e1["GH_TOKEN"] == "ghs_x"
               and e1["WATCHTOWER_AGENT"] == "tim-drake" and "CLAUDE_CODE_OAUTH_TOKEN" not in e1)
         check("a saved long-lived Claude login is passed to Tim", e2["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-test")
+        Path(d, "claude-token").write_text("sk-ant-oat-te\nst\n")
+        check("a token copied across a line break is joined", T.claude_env("tim-drake")["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-test")
+        Path(d, "claude-token").write_text("something else that was on the clipboard\n")
+        check("a file that is not a token is ignored, not sent", "CLAUDE_CODE_OAUTH_TOKEN" not in T.claude_env("tim-drake"))
     finally:
         os.environ.clear()
         os.environ.update(env_before)

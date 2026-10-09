@@ -1012,7 +1012,13 @@ def claude_env(me: str) -> dict:
     env["WATCHTOWER_AGENT"] = me  # GH_TOKEN, his own App's, is kept
     token = wt_home() / "claude-token"
     if token.exists():
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = token.read_text().strip()
+        value = "".join(token.read_text().split())  # a token copied across a line break still works
+        if value.startswith("sk-ant-"):
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = value
+        else:
+            print(f"! {token} does not hold a Claude login token (they start with sk-ant-oat). "
+                  "Run `claude setup-token` and save only the token it prints. Using Claude Code's normal login.",
+                  file=sys.stderr)
     return env
 
 

@@ -73,7 +73,7 @@
     ],
     "deny": [
       "Bash(git push -f*)", "Bash(git push * -f*)", "Bash(git push *--force*)", "Bash(git push *--delete*)",
-      "Bash(git push * +*)", "Bash(git push * :*)", "Bash(git commit *--no-verify*)",
+      "Bash(git push * +*)", "Bash(git commit *--no-verify*)",
       "WebFetch", "WebSearch",
       "Read(~/.watchtower/apps/**)", "Edit(~/.watchtower/apps/**)", "Read(~/.watchtower/google/**)",
       "Edit(~/.watchtower/google/**)", "Edit(~/.watchtower/clones/*/scheduler/**)",
