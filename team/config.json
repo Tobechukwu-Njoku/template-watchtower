@@ -1,16 +1,31 @@
 {
   "members": [
-    { "id": "tim-drake",      "name": "Tim Drake",      "role": "implementer", "focus": "Implementation" },
-    { "id": "barbara-gordon", "name": "Barbara Gordon", "role": "reviewer",    "focus": "Security and data protection" },
-    { "id": "lucius-fox",     "name": "Lucius Fox",     "role": "reviewer",    "focus": "Architecture and design" },
-    { "id": "bruce-wayne",    "name": "Bruce Wayne",    "role": "reviewer",    "focus": "Adversarial review" },
-    { "id": "victor-stone",   "name": "Victor Stone",   "role": "reviewer",    "focus": "Verification and tests" },
+    { "id": "tim-drake",      "name": "Tim Drake",      "role": "implementer", "focus": "Implementation",               "app": "implementer" },
+    { "id": "barbara-gordon", "name": "Barbara Gordon", "role": "reviewer",    "focus": "Security and data protection", "app": "reviewers" },
+    { "id": "lucius-fox",     "name": "Lucius Fox",     "role": "reviewer",    "focus": "Architecture and design",      "app": "reviewers" },
+    { "id": "bruce-wayne",    "name": "Bruce Wayne",    "role": "reviewer",    "focus": "Adversarial review",           "app": "reviewers" },
+    { "id": "victor-stone",   "name": "Victor Stone",   "role": "reviewer",    "focus": "Verification and tests",       "app": "reviewers" },
     { "id": "james-gordon",   "name": "James Gordon",   "role": "gate",        "focus": "Merge gate" }
   ],
 
   "groups": {
     "team": ["tim-drake", "barbara-gordon", "lucius-fox", "bruce-wayne", "victor-stone"],
     "reviewers": ["barbara-gordon", "lucius-fox", "bruce-wayne", "victor-stone"]
+  },
+
+  "_apps": "Each member posts through a GitHub App, so the gate knows who wrote what. Create them with scripts/create-apps.py; it fills in the slug if GitHub gives a different one. James Gordon posts as GitHub Actions.",
+  "apps": {
+    "implementer": {
+      "slug": "watchtower-tim-drake",
+      "description": "Tim Drake, implementation engineer on the Watchtower team.",
+      "permissions": { "contents": "write", "pull_requests": "write", "issues": "write",
+                       "checks": "read", "statuses": "read", "actions": "read", "metadata": "read" }
+    },
+    "reviewers": {
+      "slug": "watchtower-reviewers",
+      "description": "The Watchtower review team: Barbara Gordon, Lucius Fox, Bruce Wayne and Victor Stone.",
+      "permissions": { "contents": "read", "pull_requests": "read", "issues": "write", "metadata": "read" }
+    }
   },
 
   "cadence": {

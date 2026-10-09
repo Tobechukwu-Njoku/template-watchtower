@@ -2,8 +2,13 @@ name: Review
 
 # The review team works through PR comments on their own schedule. This workflow
 # only does the bookkeeping, with no model calls and no API keys:
-#   - on new commits or "/review": post a review request addressed to the reviewers
+#   - on new commits: post a review request addressed to the reviewers, for PRs from
+#     Tim's App or a maintainer. Anyone else's PR waits for a maintainer's "/review".
 #   - on each posted review, or the override label: re-run the gate
+# team.py decides who counts by account (each member posts through their own GitHub
+# App), so a comment that merely looks like a review changes nothing.
+#
+# Actions are pinned to commit SHAs; Dependabot keeps them current.
 #
 # pull_request_target runs this file and team/team.py from the BASE branch. The
 # PR's code is never checked out or executed, so a PR cannot rewrite its own gate.
@@ -49,20 +54,23 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
-        run: python3 team/team.py request --pr "$PR"
+          # A maintainer's "/review" starts a round on any PR, including one from outside the team.
+          FORCE: ${{ github.event_name == 'issue_comment' && '--force' || '' }}
+        run: python3 team/team.py request --pr "$PR" $FORCE
 
   gate:
     name: Gate
     if: >-
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         contains(github.event.comment.body, '<!-- team:review') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+        (github.event.comment.user.type == 'Bot' ||
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))) ||
       (github.event_name == 'pull_request_target' && github.event.label.name == 'review-override') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -72,7 +80,7 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - env:

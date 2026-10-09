@@ -62,9 +62,9 @@ All coordination happens in GitHub issue and PR comments.
 3. **Pull request.** Opened ready for review with the template filled in. James Gordon posts a review request to the reviewers and sets `review/gate` to pending.
 4. **Review.** Each reviewer, on their next check, reads the change with `team.py context` and posts one review from their lens. Every review re-runs the gate.
 5. **Address review.** If the gate fails, Tim fixes or rebuts each blocking finding in one reply addressed to those reviewers, then pushes. The push starts the next round. Three rounds at most - then the maintainer decides.
-6. **Merge.** The maintainer merges once CI and `review/gate` are green. Nobody else merges.
+6. **Merge.** The maintainer approves and merges once CI and `review/gate` are green. Nobody else merges.
 
-Comment `/review` on a PR to ask for a fresh round without pushing.
+The maintainer comments `/review` on a PR to ask for a fresh round without a push, or to start one on a PR opened by someone outside the team. Those PRs get no review until then, and they are never Tim's to fix.
 
 ## Rules
 

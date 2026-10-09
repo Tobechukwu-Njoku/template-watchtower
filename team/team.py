@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Team tooling. Everyone uses it to find work and to post, so every comment is
-signed and tracked. Talks to GitHub through the `gh` CLI (your own login locally,
-the workflow token in CI). Python 3.9+, standard library only.
+signed and tracked. Talks to GitHub through the `gh` CLI: each member's own
+GitHub App token locally (see `token`), the workflow token in CI. Python 3.9+,
+standard library only.
 
   team.py brief   --as ID                        your brief
   team.py tick    --as ID [--peek]               exit 0 = time to check, 3 = not yet
@@ -9,7 +10,8 @@ the workflow token in CI). Python 3.9+, standard library only.
   team.py context --as ID --pr N                 a pull request, prepared for review
   team.py review  --as ID --pr N --file F.json   post your review
   team.py comment --as ID --on N (--body T | --body-file F) [--to "A, B"] [--needs-maintainer]
-  team.py request --pr N                         CI: ask reviewers for a round
+  team.py token   --as ID                        scheduler: a one-hour GitHub token for ID's App
+  team.py request --pr N [--force]               CI: ask reviewers for a round
   team.py gate    --pr N                         CI: decide the review/gate status
 """
 from __future__ import annotations
@@ -23,6 +25,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -61,15 +65,49 @@ def parse_marker(body: str) -> dict | None:
     return out
 
 
-def trusted(c: dict) -> bool:
-    return (c.get("author_association") in CFG["gate"]["trusted_associations"]
-            or (c.get("user") or {}).get("login") == BOT)
+def app_login(member_id: str) -> str:
+    """The GitHub login a team member posts as: their App's bot, or GitHub Actions for the gate."""
+    m = MEMBERS[member_id]
+    return CFG["apps"][m["app"]]["slug"] + "[bot]" if m.get("app") else BOT
+
+
+def login_of(c: dict) -> str | None:
+    return (c.get("user") or {}).get("login")
 
 
 def by(c: dict) -> str | None:
-    """Team member id that wrote a comment, from its marker."""
+    """Team member who wrote a comment. The marker names them, and it only counts when the
+    comment comes from that member's own account, so nobody can sign as someone else."""
     m = parse_marker(c.get("body", ""))
-    return m.get("id") if m else None
+    mid = m.get("id") if m else None
+    return mid if mid in MEMBERS and login_of(c) == app_login(mid) else None
+
+
+def human(c: dict) -> bool:
+    """A maintainer or collaborator writing as themselves (not an App, not a stranger)."""
+    return ((c.get("user") or {}).get("type") != "Bot"
+            and c.get("author_association") in CFG["gate"]["trusted_associations"])
+
+
+def credible(c: dict) -> bool:
+    """Worth acting on: a team member's own post, or a maintainer's."""
+    return by(c) is not None or human(c)
+
+
+def kind(c: dict) -> str | None:
+    return (parse_marker(c.get("body", "")) or {}).get("kind")
+
+
+def pr_from_team(pr: dict) -> bool:
+    """Opened by Tim's App or by a maintainer. Anyone else waits for a maintainer's /review."""
+    return login_of(pr) == app_login("tim-drake") or human(pr)
+
+
+def labelled_by_human(events: list, label: str) -> bool:
+    """True if the most recent time `label` was added, a person added it. Only people with
+    triage access or more can label, so this rules out strangers and the team's own Apps."""
+    hits = [e for e in events if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == label]
+    return bool(hits) and (hits[-1].get("actor") or {}).get("type") != "Bot"
 
 
 def addressed_to(body: str, member_id: str) -> bool:
@@ -133,10 +171,16 @@ class GH:
 
     @staticmethod
     def _detect() -> str:
+        # From the clone's remote first: it needs no login, which matters before an App token exists.
+        url = subprocess.run(["git", "-C", str(HERE), "remote", "get-url", "origin"],
+                             capture_output=True, text=True).stdout.strip()
+        m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", url)
+        if m:
+            return m.group(1)
         out = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
                              capture_output=True, text=True)
         if out.returncode != 0:
-            sys.exit("could not detect the repository - run inside a clone, logged in with `gh auth login`")
+            sys.exit("could not detect the repository - run inside a clone of it")
         return out.stdout.strip()
 
     def api(self, path: str, method: str = "GET", body: dict | None = None, accept: str | None = None) -> str:
@@ -167,10 +211,9 @@ class GH:
     def comments(self, n: int) -> list:
         return self.paged(f"issues/{n}/comments")
 
-    def upsert(self, n: int, kind: str, member_id: str | None, body: str) -> None:
+    def upsert(self, n: int, kind_: str, member_id: str, body: str) -> None:
         for c in self.comments(n):
-            m = parse_marker(c["body"])
-            if m and m["kind"] == kind and m.get("id") == member_id and trusted(c):
+            if kind(c) == kind_ and by(c) == member_id:
                 self.api(f"issues/comments/{c['id']}", "PATCH", {"body": body})
                 return
         self.api(f"issues/{n}/comments", "POST", {"body": body})
@@ -191,13 +234,16 @@ def latest(comments: list, pred) -> dict | None:
 
 
 def reviewer_needs(me: str, pr: dict, comments: list) -> str | None:
-    """Why a reviewer owes this PR a review, or None."""
+    """Why a reviewer owes this PR a review, or None. Only a review request for the current
+    commit counts: the team's own PRs get one on every push, while a PR from outside the
+    team waits for a maintainer's /review each time its author pushes."""
     if pr.get("draft"):
         return None
     head = pr["head"]["sha"][:12]
-    mine = latest(comments, lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "review"
-                  and by(c) == me)
-    req = latest(comments, lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "request")
+    mine = latest(comments, lambda c: kind(c) == "review" and by(c) == me)
+    req = latest(comments, lambda c: kind(c) == "request" and by(c) == "james-gordon")
+    if not req or parse_marker(req["body"]).get("sha") != head:
+        return None
     if not mine:
         return "review requested"
     if parse_marker(mine["body"]).get("sha") != head:
@@ -208,8 +254,11 @@ def reviewer_needs(me: str, pr: dict, comments: list) -> str | None:
 
 
 def implementer_needs(me: str, pr: dict, comments: list) -> str | None:
-    """Tim owes a response when the gate failed on the current head and he has not replied since."""
-    gate = latest(comments, lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "gate")
+    """Tim owes a response when the gate failed on the current head of his own PR and he has
+    not replied since. Other people's PRs are never his: he would be running their code."""
+    if login_of(pr) != app_login(me):
+        return None
+    gate = latest(comments, lambda c: kind(c) == "gate" and by(c) == "james-gordon")
     if not gate:
         return None
     m = parse_marker(gate["body"])
@@ -230,7 +279,7 @@ def mention_needs(me: str, thread: dict, comments: list) -> list[dict]:
                "user": thread.get("user"), "html_url": thread["html_url"]}
     out = []
     for c in [opening] + comments:
-        if by(c) == me or not trusted(c) or c["created_at"] <= since:
+        if by(c) == me or not credible(c) or c["created_at"] <= since:
             continue
         if addressed_to(c["body"], me):
             out.append(c)
@@ -296,8 +345,7 @@ def gate_decide(comments: list, head: str, labels: set) -> tuple[str, str, list[
     rows, failing, missing, rounds = [], [], [], []
     for rid in CFG["groups"]["reviewers"]:
         m = MEMBERS[rid]
-        c = latest(comments, lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "review"
-                   and by(c) == rid)
+        c = latest(comments, lambda c: kind(c) == "review" and by(c) == rid)
         mk = parse_marker(c["body"]) if c else None
         if not mk or mk.get("sha") != head[:12]:
             rows.append(f"| {m['name']} | {m['focus']} | waiting | - |")
@@ -333,10 +381,73 @@ def cmd_brief(a) -> int:
     return 0
 
 
+def wt_home() -> Path:
+    return Path(os.environ.get("WATCHTOWER_HOME", Path.home() / ".watchtower"))
+
+
 def state_path(repo: str, me: str) -> Path:
-    p = Path(os.environ.get("WATCHTOWER_HOME", Path.home() / ".watchtower")) / repo.replace("/", "__") / f"{me}.json"
+    p = wt_home() / repo.replace("/", "__") / f"{me}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+# --------------------------------------------------------------------------- App tokens
+
+def b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def app_jwt(issuer, pem: Path, now_: int | None = None) -> str:
+    """A ten-minute JSON Web Token that proves we hold the App's private key.
+    Signed with the openssl command, since the standard library has no RSA."""
+    t = int(time.time()) if now_ is None else now_
+    head = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    body = b64url(json.dumps({"iat": t - 60, "exp": t + 540, "iss": issuer}, separators=(",", ":")).encode())
+    signed = f"{head}.{body}"
+    out = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(pem)], input=signed.encode(), capture_output=True)
+    if out.returncode != 0:
+        raise RuntimeError(f"openssl could not sign with {pem}: {out.stderr.decode().strip()[:200]}")
+    return f"{signed}.{b64url(out.stdout)}"
+
+
+def github_as_app(method: str, path: str, jwt: str, body: dict | None = None) -> dict:
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    req = urllib.request.Request(f"{api}{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {jwt}",
+                                          "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "watchtower-team"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"{method} {path}: HTTP {e.code} {e.read().decode()[:200]}") from None
+
+
+def cmd_token(a) -> int:
+    """Print a one-hour installation token for a member's App, limited to this repository.
+    The scheduler puts it in GH_TOKEN, so `gh` and git act as that member."""
+    if "WATCHTOWER_AGENT" in os.environ:  # set, even to nothing, means an agent is asking
+        sys.exit("token is for the scheduler, not for a running agent")
+    m = MEMBERS[a.as_]
+    if not m.get("app"):
+        sys.exit(f"{a.as_} posts as GitHub Actions and has no App")
+    slug = CFG["apps"][m["app"]]["slug"]
+    keys = wt_home() / "apps"
+    try:
+        meta = json.loads((keys / f"{slug}.json").read_text())
+    except FileNotFoundError:
+        sys.exit(f"no credentials for {slug} in {keys} - run scripts/create-apps.py")
+    jwt = app_jwt(meta.get("client_id") or int(meta["id"]), keys / f"{slug}.pem")
+    repo = GH._detect() if not os.environ.get("GITHUB_REPOSITORY") else os.environ["GITHUB_REPOSITORY"]
+    try:
+        inst = github_as_app("GET", f"/repos/{repo}/installation", jwt)
+    except RuntimeError as e:
+        sys.exit(f"{slug} is not installed on {repo} - install it at "
+                 f"https://github.com/apps/{slug}/installations/new ({e})")
+    tok = github_as_app("POST", f"/app/installations/{inst['id']}/access_tokens", jwt,
+                        {"repositories": [repo.split("/", 1)[1]]})
+    print(tok["token"])
+    return 0
 
 
 def cmd_tick(a) -> int:
@@ -375,7 +486,8 @@ def gather_inbox(gh: GH, me: str) -> list[dict]:
                 seen.add(n)
         labels = {l["name"] for l in t.get("labels", [])}
         if (role == "implementer" and not is_pr and CFG["labels"]["ready"] in labels
-                and not any(by(c) == me for c in comments)):
+                and not any(by(c) == me for c in comments)
+                and labelled_by_human(gh.paged(f"issues/{n}/events"), CFG["labels"]["ready"])):
             items.append({"number": n, "kind": "issue", "title": t["title"], "why": "ready for implementation",
                           "url": t["html_url"], "action": f"Pick up issue #{n}", "next": f"gh issue view {n} --comments"})
             seen.add(n)
@@ -409,15 +521,14 @@ def cmd_context(a) -> int:
     comments = gh.comments(a.pr)
     diff, skipped = filter_diff(gh.api(f"pulls/{a.pr}", accept="application/vnd.github.v3.diff"))
     commits = [c["commit"]["message"] for c in gh.paged(f"pulls/{a.pr}/commits")][-20:]
-    prev = latest(comments, lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "review"
-                  and by(c) == a.as_)
+    prev = latest(comments, lambda c: kind(c) == "review" and by(c) == a.as_)
     s = [f"# Pull request #{a.pr}: {blind(pr['title'])}", f"Head commit: {pr['head']['sha'][:12]}",
          "", "## Description", "", blind(pr.get("body") or "") or "(none)"]
     if commits:
         s += ["", "## Commit messages", "", "\n---\n".join(blind(c) for c in commits)]
     if prev:
         s += ["", "## Your previous review", "", blind(prev["body"])]
-        later = [c for c in comments if c["created_at"] > prev["updated_at"] and trusted(c) and by(c) != a.as_
+        later = [c for c in comments if c["created_at"] > prev["updated_at"] and credible(c) and by(c) != a.as_
                  and (by(c) == "tim-drake" or addressed_to(c["body"], a.as_))]
         if later:
             s += ["", "## Replies since", ""] + [blind(c["body"]) + "\n---" for c in later]
@@ -441,8 +552,7 @@ def cmd_review(a) -> int:
     payload = json.loads(Path(a.file).read_text())
     pr = gh.get(f"pulls/{a.pr}")
     files = {f["filename"] for f in gh.paged(f"pulls/{a.pr}/files")}
-    prev = latest(gh.comments(a.pr), lambda c: trusted(c) and (parse_marker(c["body"]) or {}).get("kind") == "review"
-                  and by(c) == a.as_)
+    prev = latest(gh.comments(a.pr), lambda c: kind(c) == "review" and by(c) == a.as_)
     pm = parse_marker(prev["body"]) if prev else {}
     r = build_review(a.as_, payload, files, pr["head"]["sha"], int(pm.get("round", 0)), pm.get("sha", ""))
     gh.upsert(a.pr, "review", a.as_, render_review(r))
@@ -479,6 +589,15 @@ def cmd_request(a) -> int:
         print("draft - no review requested")
         return 0
     sha = pr["head"]["sha"]
+    if not a.force and not pr_from_team(pr):
+        # Reviewers read whatever is in a PR, so strangers do not get their attention by
+        # opening one. A maintainer's "/review" comment runs this again with --force.
+        try:  # Dependabot PRs get a read-only token here; nothing to do for them either way
+            gh.status(sha, "pending", "Opened outside the team - a maintainer comments /review to start")
+        except RuntimeError:
+            pass
+        print(f"opened by {login_of(pr)} - waiting for a maintainer's /review")
+        return 0
     names = ", ".join(MEMBERS[r]["name"] for r in CFG["groups"]["reviewers"])
     body = "\n".join([marker("request", id="james-gordon", sha=sha[:12]), f"To: {names}", "",
                       f"Commit `{sha[:7]}` is ready for review. Each of you: one review from your lens, "
@@ -534,7 +653,9 @@ def main() -> int:
     r = p("review"); r.add_argument("--pr", type=int, required=True); r.add_argument("--file", required=True)
     m = p("comment"); m.add_argument("--on", type=int, required=True); m.add_argument("--body"); m.add_argument("--body-file")
     m.add_argument("--to"); m.add_argument("--needs-maintainer", action="store_true")
+    p("token")
     q = p("request", who=False); q.add_argument("--pr", type=int, required=True)
+    q.add_argument("--force", action="store_true", help="request even for a PR from outside the team")
     g = p("gate", who=False); g.add_argument("--pr", type=int, required=True)
     a = ap.parse_args()
     return globals()[f"cmd_{a.cmd}"](a)

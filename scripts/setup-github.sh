@@ -2,10 +2,15 @@
 # One-time GitHub setup for this repo. Idempotent - safe to re-run.
 #   scripts/setup-github.sh <repo-name> --public|--private
 #
-# Requires: gh (logged in with repo + workflow scopes), git.
+# Requires: gh (logged in with repo + workflow scopes), git, python3.
 # Note: rulesets (the merge gate) are only enforced on public repos, or on
 # private repos with GitHub Pro/Team. On a free private repo everything else
 # works, but the gate is advisory.
+#
+# Merging to main needs the checks below, each reported by GitHub Actions itself
+# (integration 15368), plus one approval from a code owner. The repository admin
+# role may bypass the pull request rules - that is how you merge your own PRs,
+# which GitHub will not let you approve - but nobody can push to main directly.
 set -eu
 
 name="${1:?usage: setup-github.sh <repo-name> --public|--private}"
@@ -57,25 +62,27 @@ ruleset=$(cat <<'JSON'
   "target": "branch",
   "enforcement": "active",
   "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-  "bypass_actors": [],
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request" }
+  ],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
     { "type": "required_linear_history" },
     { "type": "pull_request", "parameters": {
-        "required_approving_review_count": 0,
+        "required_approving_review_count": 1,
         "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": false,
+        "require_code_owner_review": true,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true } },
     { "type": "required_status_checks", "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "review/gate" },
-          { "context": "PR title" },
-          { "context": "Hygiene" },
-          { "context": "Build and test" },
-          { "context": "Team self-test" } ] } }
+          { "context": "review/gate", "integration_id": 15368 },
+          { "context": "PR title", "integration_id": 15368 },
+          { "context": "Hygiene", "integration_id": 15368 },
+          { "context": "Build and test", "integration_id": 15368 },
+          { "context": "Team self-test", "integration_id": 15368 } ] } }
   ]
 }
 JSON
@@ -98,4 +105,19 @@ say "Labels for the team"
 gh label create ready --repo "$repo" --color 0E8A16 --description "Agreed and ready for implementation" --force >/dev/null
 gh label create needs-maintainer --repo "$repo" --color FBCA04 --description "Waiting on a maintainer decision" --force >/dev/null
 
+say "Team Apps (one per identity - see docs/maintainers/pipeline.md)"
+# Asking each App for a token proves its key is on this machine and it is installed here.
+python3 -c 'import json
+c = json.load(open("team/config.json"))
+for key, a in c["apps"].items():
+    print(a["slug"], next(m["id"] for m in c["members"] if m.get("app") == key))' |
+while read -r slug member; do
+  if err="$(python3 team/team.py token --as "$member" 2>&1 >/dev/null)"; then
+    echo "   $slug: installed and working"
+  else
+    warn "$slug: $err"
+  fi
+done
+
+say "Check in Settings > Rules > Rulesets > main that 'Repository admin' is listed under bypass."
 say "Done: https://github.com/$repo"

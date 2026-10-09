@@ -5,8 +5,11 @@
 #   */10 * * * * /path/to/clone/scripts/watch.sh barbara-gordon
 #
 # The schedule itself (hourly when the repo is quiet, every 10 minutes while it is
-# active) is decided by `team.py tick`. An idle check costs two GitHub API calls and
+# active) is decided by `team.py tick`. An idle check costs four GitHub API calls and
 # no agent time. The agent is launched only if `team.py inbox` has something.
+#
+# Everything runs as the member's own GitHub App: a one-hour token from
+# `team.py token` goes in GH_TOKEN, so the team never uses your personal login.
 #
 # How each member is launched comes from $WATCHTOWER_HOME/agents.json
 # (default ~/.watchtower/agents.json). Logs: $WATCHTOWER_HOME/logs/.
@@ -26,6 +29,8 @@ mkdir "$lock" 2>/dev/null || exit 0
 trap 'rmdir "$lock"' EXIT
 
 cd "$root" || exit 1
+GH_TOKEN="$(python3 team/team.py token --as "$id" 2>>"$log")" || exit 0
+export GH_TOKEN
 python3 team/team.py tick --as "$id" >/dev/null 2>>"$log"
 [ $? -eq 0 ] || exit 0
 
@@ -53,5 +58,8 @@ branch = subprocess.run(["git", "-C", workdir, "branch", "--show-current"], capt
 if branch == "main":
     subprocess.run(["git", "-C", workdir, "pull", "--ff-only", "-q"])
 cmd = [a.replace("{prompt}", prompt) for a in spec["command"]]
-sys.exit(subprocess.run(cmd, cwd=workdir, timeout=spec.get("timeout_minutes", 60) * 60).returncode)
+# The agent inherits GH_TOKEN (its own App) and is marked as an agent, so it cannot mint
+# a token for anyone else.
+env = dict(os.environ, WATCHTOWER_AGENT=member)
+sys.exit(subprocess.run(cmd, cwd=workdir, env=env, timeout=spec.get("timeout_minutes", 60) * 60).returncode)
 PY
