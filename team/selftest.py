@@ -275,6 +275,95 @@ with tempfile.TemporaryDirectory() as d:
         os.environ.clear()
         os.environ.update(env_before)
 
+# Tim: how Claude Code is run
+clone_dir = Path(tempfile.gettempdir()) / "wt-selftest-clone"
+cs = T.claude_settings(clone_dir)
+allow, deny = cs["permissions"]["allow"], cs["permissions"]["deny"]
+check("edits are allowed only inside Tim's clone", f"Edit(/{clone_dir.resolve()}/**)" in allow
+      and not any(r in ("Edit", "Write", "Read", "Bash") or r.startswith(("Edit(~", "Read(", "Bash(*")) for r in allow))
+check("force-push, branch deletion and skipping hooks are refused",
+      all(r in deny for r in ("Bash(git push *--force*)", "Bash(git push -f*)", "Bash(git push *--delete*)", "Bash(git commit *--no-verify*)")))
+check("no gh command that writes, and no gh api", not any(r.startswith(("Bash(gh api", "Bash(gh pr create", "Bash(gh pr merge", "Bash(gh *"))
+                                                          for r in allow))
+check("the App keys and Google logins are out of reach, but his own clone is not",
+      "Read(~/.watchtower/apps/**)" in deny and "Read(~/.watchtower/google/**)" in deny and "Read(~/.watchtower/**)" not in deny)
+check("no web access", "WebFetch" in deny and "WebSearch" in deny)
+check("commits and PRs carry no tool credit lines", cs["attribution"] == {"commit": "", "pr": "", "sessionUrl": False})
+cc = T.claude_command(clone_dir, "hi")
+check("Claude Code refuses what is not allowed, ignores personal settings, keeps no transcript",
+      all(x in cc for x in ("dontAsk", "--no-session-persistence")) and cc[cc.index("--setting-sources") + 1] == "project")
+check("Tim runs on the configured model", cc[cc.index("--model") + 1] == T.CFG["implementing"]["model"])
+check("the project settings no longer pin a model or block ~/.watchtower for your own sessions",
+      "model" not in json.loads((Path(T.HERE).parent / ".claude" / "settings.json").read_text())
+      and not any("watchtower" in r for r in json.loads((Path(T.HERE).parent / ".claude" / "settings.json").read_text())["permissions"]["deny"]))
+
+with tempfile.TemporaryDirectory() as d:
+    env_before = dict(os.environ)
+    os.environ.update(WATCHTOWER_HOME=d, CLAUDE_CODE_SIMPLE="1", ANTHROPIC_BASE_URL="http://proxy", GH_TOKEN="ghs_x")
+    try:
+        e1 = T.claude_env("tim-drake")
+        Path(d, "claude-token").write_text("sk-ant-oat-test\n")
+        e2 = T.claude_env("tim-drake")
+        check("settings inherited from a Claude session are dropped; Tim's App token is kept",
+              "CLAUDE_CODE_SIMPLE" not in e1 and "ANTHROPIC_BASE_URL" not in e1 and e1["GH_TOKEN"] == "ghs_x"
+              and e1["WATCHTOWER_AGENT"] == "tim-drake" and "CLAUDE_CODE_OAUTH_TOKEN" not in e1)
+        check("a saved long-lived Claude login is passed to Tim", e2["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-test")
+    finally:
+        os.environ.clear()
+        os.environ.update(env_before)
+
+# GitHub responses are reused until something is written
+with tempfile.TemporaryDirectory() as d:
+    fake = Path(d, "gh")
+    fake.write_text('#!/bin/sh\necho "$@" >> "$(dirname "$0")/calls"\necho "[]"\n')
+    fake.chmod(0o755)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{d}:{path_before}"
+    try:
+        g = T.GH("o/r")
+        g.get("issues/1/comments"); g.get("issues/1/comments")
+        g.api("issues/1/comments", "POST", {"body": "x"})
+        g.get("issues/1/comments")
+        calls = Path(d, "calls").read_text().splitlines()
+        check("a repeated read is served from memory; a write clears it", len(calls) == 3 and g.calls == 3)
+    finally:
+        os.environ["PATH"] = path_before
+
+# Tim's clone: commits and pushes as his App, never with your login
+if shutil.which("git"):
+    with tempfile.TemporaryDirectory() as d:
+        origin, home = Path(d, "origin.git"), Path(d, "home")
+        seed = Path(d, "seed")
+        for args in (["init", "-q", "--bare", "-b", "main", str(origin)], ["init", "-q", "-b", "main", str(seed)]):
+            subprocess.run(["git", *args], check=True)
+        subprocess.run(["git", "-C", str(seed), "-c", "user.name=s", "-c", "user.email=s@s", "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+        subprocess.run(["git", "-C", str(seed), "push", "-q", str(origin), "main"], check=True)
+        (home / "apps").mkdir(parents=True)
+        slug = T.CFG["apps"]["implementer"]["slug"]
+        (home / "apps" / f"{slug}.json").write_text(json.dumps({"id": 1, "slug": slug, "bot_user_id": 4242}))
+        env_before = dict(os.environ)
+        os.environ.update(WATCHTOWER_HOME=str(home), WATCHTOWER_CLONE_URL=str(origin), GH_TOKEN="ghs_test_token")
+        try:
+            g = T.GH("o/r")
+            path = T.ensure_clone(g, "tim-drake")
+            T.ensure_clone(g, "tim-drake")  # twice: must not pile up helpers
+            cfg = lambda *k: subprocess.run(["git", "-C", str(path), "config", *k], capture_output=True, text=True).stdout.split("\n")[:-1]
+            check("Tim's clone lives under ~/.watchtower/clones", path == home / "clones" / "o__r" / "tim-drake")
+            check("commits are authored as his App's bot",
+                  cfg("user.email") == [f"4242+{slug}[bot]@users.noreply.github.com"] and cfg("user.name") == [f"{slug}[bot]"])
+            # Your system git may add a helper (Apple's command line tools add the macOS keychain);
+            # the clone's own config resets the list, then adds only the App token helper.
+            check("other credential helpers are cleared, then only the App token helper is used",
+                  cfg("--local", "--get-all", "credential.helper") == ["", T.CREDENTIAL_HELPER])
+            fill = subprocess.run(["git", "-C", str(path), "credential", "fill"], input="protocol=https\nhost=github.com\n\n",
+                                  capture_output=True, text=True).stdout
+            check("git would push with the App token as x-access-token",
+                  "username=x-access-token" in fill and "password=ghs_test_token" in fill)
+            check("the repo's git hooks are on", cfg("core.hooksPath") == [".githooks"])
+        finally:
+            os.environ.clear()
+            os.environ.update(env_before)
+
 # Briefs exist and read as a colleague's brief
 banned = ("artificial intelligence", "language model", " llm", " ai ", "chatbot", "assistant", "prompt engineer")
 for mem in T.CFG["members"]:
