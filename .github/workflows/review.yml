@@ -2,8 +2,9 @@ name: Review
 
 # The review team works through PR comments on their own schedule. This workflow
 # only does the bookkeeping, with no model calls and no API keys:
-#   - on new commits: post a review request addressed to the reviewers, for PRs from
-#     Tim's App or a maintainer. Anyone else's PR waits for a maintainer's "/review".
+#   - on new commits, or an edited description: post a review request addressed to
+#     the reviewers, for PRs from Tim's App or a maintainer. Anyone else's PR waits
+#     for a maintainer's "/review".
 #   - on each posted review, or the override label: re-run the gate
 # team.py decides who counts by account (each member posts through their own GitHub
 # App), so a comment that merely looks like a review changes nothing.
@@ -15,7 +16,7 @@ name: Review
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
   issue_comment:
     types: [created, edited]
   workflow_dispatch:
@@ -29,7 +30,8 @@ concurrency:
   group: >-
     review-${{
       ((github.event_name == 'issue_comment' && !(contains(github.event.comment.body, '<!-- team:review') || startsWith(github.event.comment.body, '/review'))) ||
-       (contains(fromJSON('["labeled","unlabeled"]'), github.event.action) && github.event.label.name != 'review-override'))
+       (contains(fromJSON('["labeled","unlabeled"]'), github.event.action) && github.event.label.name != 'review-override') ||
+       (github.event.action == 'edited' && !github.event.changes.body))
       && format('noop-{0}', github.run_id)
       || (github.event.pull_request.number || github.event.issue.number || inputs.pr)
     }}
@@ -43,7 +45,8 @@ jobs:
     name: Request review
     if: >-
       (github.event_name == 'pull_request_target' && !github.event.pull_request.draft &&
-        contains(fromJSON('["opened","synchronize","reopened","ready_for_review"]'), github.event.action)) ||
+        (contains(fromJSON('["opened","synchronize","reopened","ready_for_review"]'), github.event.action) ||
+         (github.event.action == 'edited' && github.event.changes.body))) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         startsWith(github.event.comment.body, '/review') &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))

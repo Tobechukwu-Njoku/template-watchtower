@@ -48,11 +48,26 @@
     "trusted_associations": ["OWNER", "MEMBER", "COLLABORATOR"]
   },
 
-  "diff_exclude_globs": [
-    "*.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "go.sum", "Cargo.lock", "poetry.lock",
-    "*.min.js", "*.min.css", "*.map", "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.pdf",
-    "dist/*", "build/*", "vendor/*", "node_modules/*"
-  ],
+  "_diff": "hide: binary files, left out of what reviewers see. trim: shown up to trim_chars each, so a change to a lock file or vendored code is still visible. A PR larger than max_part_chars is reviewed in parts; more than max_parts and it is sent back to be split.",
+  "diff": {
+    "hide_globs": ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.webp", "*.pdf", "*.woff", "*.woff2", "*.ttf", "*.zip", "*.gz"],
+    "trim_globs": ["*.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "go.sum", "Cargo.lock", "poetry.lock",
+                   "*.min.js", "*.min.css", "*.map", "*.svg", "dist/*", "build/*", "vendor/*", "node_modules/*"],
+    "trim_chars": 4000,
+    "max_part_chars": 250000,
+    "max_parts": 4
+  },
+
+  "_reviewing": "Each reviewer is one question to Gemini through Antigravity's connector, signed in to one of your Google accounts (team.py google-login). Model values are the connector's own names: gemini-pro-agent is Gemini 3.1 Pro (High).",
+  "reviewing": {
+    "members": {
+      "barbara-gordon": { "account": "google-1", "model": "gemini-pro-agent" },
+      "lucius-fox":     { "account": "google-1", "model": "gemini-pro-agent" },
+      "bruce-wayne":    { "account": "google-2", "model": "gemini-pro-agent" },
+      "victor-stone":   { "account": "google-2", "model": "gemini-3.8-flash-high" }
+    },
+    "timeout_minutes": 15
+  },
 
   "blind": {
     "strip_sections": ["Provenance", "AI Disclosure", "AI-use disclosure"],
