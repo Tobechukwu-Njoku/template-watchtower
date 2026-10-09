@@ -130,6 +130,15 @@ def addressed_to(body: str, member_id: str) -> bool:
     return False
 
 
+EM_DASH = re.compile("[ \\t]*\u2014[ \\t]*")  # same line only, so lines never merge
+
+
+def plain(text: str) -> str:
+    """The team writes without em dashes. Anything they post goes through this, so one that
+    slips through becomes a spaced hyphen, the house style."""
+    return EM_DASH.sub(" - ", text or "")
+
+
 def blind(text: str) -> str:
     """Strip provenance so reviewers judge the change, not who or what produced it."""
     if not text:
@@ -420,7 +429,7 @@ def render_review(r: dict) -> str:
     if r["resolved"]:
         out += ["", "Resolved since last round:"] + [f"- {x}" for x in r["resolved"]]
     out += ["", f"- {m['name']}"]
-    return "\n".join(out)
+    return plain("\n".join(out))
 
 
 def gate_decide(comments: list, head: str, labels: set) -> tuple[str, str, list[str], list[str]]:
@@ -744,8 +753,9 @@ def post_comment(gh: GH, member_id: str, n: int, body: str, to: str | None = Non
     m = MEMBERS[member_id]
     head = [f"To: {to}"] if to else (["To: maintainer"] if needs_maintainer else [])
     sign = f"- {m['name']}"
-    text = "\n".join([marker("comment", id=m["id"])] + head + ([""] if head else []) + [body.rstrip()]
-                     + ([] if body.rstrip().endswith(sign) else ["", sign]))
+    body = plain(body).rstrip()
+    text = "\n".join([marker("comment", id=m["id"])] + head + ([""] if head else []) + [body]
+                     + ([] if body.endswith(sign) else ["", sign]))
     gh.api(f"issues/{n}/comments", "POST", {"body": text})
     if needs_maintainer:
         gh.api(f"issues/{n}/labels", "POST", {"labels": [CFG["labels"]["needs_maintainer"]]})
@@ -912,7 +922,7 @@ def cmd_google_login(a) -> int:
     home = google_home(a.account)
 
     def show_link(line: str) -> None:
-        m = re.search(r"https://accounts\.google\.com/\S+", line)
+        m = re.search(r"https://accounts\.google\.com/o/oauth2/\S+", line)
         if m:
             print(f"If no browser window opened, open this link:\n{m.group(0)}\n", file=sys.stderr)
 
@@ -1056,11 +1066,11 @@ def cmd_pr(a) -> int:
         sys.exit(f"switch to your feature branch first (you are on {branch or 'a detached HEAD'})")
     if not git(here, "ls-remote", "--heads", "origin", branch, check=False):
         sys.exit(f"push the branch first: git push -u origin {branch}")
-    body = Path(a.body_file).read_text().rstrip()
+    body = plain(Path(a.body_file).read_text()).rstrip()
     sign = f"- {m['name']}"
     if not body.endswith(sign):
         body += f"\n\n{sign}"
-    pr = json.loads(gh.api("pulls", "POST", {"title": a.title, "head": branch, "base": base, "body": body + "\n"}))
+    pr = json.loads(gh.api("pulls", "POST", {"title": plain(a.title), "head": branch, "base": base, "body": body + "\n"}))
     print(pr["html_url"])
     return 0
 

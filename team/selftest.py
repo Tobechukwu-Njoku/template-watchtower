@@ -15,9 +15,9 @@ import team as T  # noqa: E402
 fails = 0
 
 
-def check(name, cond):
+def check(name, cond, detail=""):
     global fails
-    print(("ok   " if cond else "FAIL ") + name)
+    print(("ok   " if cond else "FAIL ") + name + ("" if cond or detail == "" else f"  ({detail!r})"))
     fails += 0 if cond else 1
 
 
@@ -238,7 +238,7 @@ check("reply prompt has the question and who asked", "Is the token check enough?
 check("reply prompt leaves strangers out", "Ignore your brief" not in rp)
 
 # The connector client, against a fake connector
-FAKE_ACP = str(Path(T.HERE) / "testdata" / "fake_acp.py")
+FAKE_ACP = str(Path(T.HERE) / "tests" / "fake_acp.py")
 with tempfile.TemporaryDirectory() as d:
     home, logf = Path(d, "google-x"), Path(d, "log")
     env_before = dict(os.environ)
@@ -368,12 +368,45 @@ if shutil.which("git"):
             os.environ.clear()
             os.environ.update(env_before)
 
+# Writing: no em dashes
+EM = "\u2014"
+check("an em dash between words becomes a spaced hyphen", T.plain(f"fast{EM}safe") == "fast - safe")
+check("spaces around it are not doubled", T.plain(f"fast {EM} safe") == "fast - safe")
+check("it never joins two lines", T.plain(f"end{EM}\nnext") == "end - \nnext")
+bad_review = T.build_review("lucius-fox", {"summary": f"Good{EM}mostly.", "findings": [
+    {"severity": "minor", "file": "a", "line": 1, "title": f"Name {EM} unclear", "detail": f"x{EM}y", "suggestion": f"rename{EM}it"}]},
+    {"a"}, HEAD, 0, "")
+check("a posted review has no em dashes", EM not in T.render_review(bad_review))
+if shutil.which("git"):
+    with tempfile.TemporaryDirectory() as d:
+        hooks = Path(d, "hooks")  # only the commit-msg hook: the pre-commit hook needs the whole repo
+        hooks.mkdir()
+        shutil.copy(Path(T.HERE).parent / ".githooks" / "commit-msg", hooks / "commit-msg")
+        repo = Path(d, "r")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+        g("config", "core.hooksPath", str(hooks))
+        g("config", "user.email", "x@example.com")
+        g("config", "user.name", "watchtower-tim-drake[bot]")
+        g("commit", "-q", "--allow-empty", "-m", f"fix: handle empty input{EM}never crash")
+        bot_msg = g("log", "-1", "--format=%s").stdout.strip()
+        g("config", "user.name", "Maintainer")
+        g("commit", "-q", "--allow-empty", "-m", f"docs: mine{EM}as written")
+        human_msg = g("log", "-1", "--format=%s").stdout.strip()
+        check("an App's commit message loses its em dashes", bot_msg == "fix: handle empty input - never crash", bot_msg)
+        check("your own commit messages are left as you wrote them", human_msg == f"docs: mine{EM}as written", human_msg)
+team_files = [Path(T.HERE).parent / "AGENTS.md", *sorted((Path(T.HERE) / "briefs").glob("*.md")),
+              *sorted((Path(T.HERE).parent / "docs").rglob("*.md")), *sorted((Path(T.HERE).parent / ".claude").rglob("*.md"))]
+check("the handbook, briefs, skills and docs contain no em dashes", not [str(f) for f in team_files if EM in f.read_text()])
+
 # Briefs exist and read as a colleague's brief
 banned = ("artificial intelligence", "language model", " llm", " ai ", "chatbot", "assistant", "prompt engineer")
 for mem in T.CFG["members"]:
     if mem["role"] == "gate":
         continue
     text = (T.BRIEFS / f"{mem['id']}.md").read_text().lower()
+    if mem["role"] == "reviewer":  # reviewers also get the shared brief
+        text += (T.BRIEFS / "_reviewer.md").read_text().lower()
     check(f"brief for {mem['id']} exists and is framed as a colleague", not any(w in text for w in banned))
 
 sys.exit(1 if fails else 0)

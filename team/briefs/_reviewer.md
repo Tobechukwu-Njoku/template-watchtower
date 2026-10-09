@@ -36,3 +36,5 @@ Review format - a single JSON object:
 }
 
 Use "request_changes" only if at least one finding is a blocker or major. Use an empty findings array when you have none.
+
+Write without em dashes: use a comma, a colon, a full stop or a spaced hyphen ( - ) instead.

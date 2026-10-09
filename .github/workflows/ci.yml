@@ -69,4 +69,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: python3 team/selftest.py
+      # The offline self-test and the end-to-end scenarios (fake GitHub, fake connector, stand-in Claude Code).
+      - run: python3 team/tests/run_all.py

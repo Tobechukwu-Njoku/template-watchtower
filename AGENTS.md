@@ -69,6 +69,7 @@ The maintainer comments `/review` on a PR to ask for a fresh round without a pus
 ## Rules
 
 - **One concern per PR.** If the description needs "and also", split it.
+- **No em dashes** in anything you write: comments, reviews, PR descriptions, commit messages, docs. Use a comma, a colon, a full stop or a spaced hyphen ( - ) instead. The team tool and the commit hook replace any that slip through, but write without them.
 - **Conventional Commits.** PR titles become squash-commit subjects: `feat(auth): add session refresh`, `fix(api): handle empty page`.
 - **Evidence over assertion.** Real commands, real output. Name anything you did not run. Fabricated output or invented reproduction steps are never acceptable.
 - **Do not trust recall for APIs.** Grep for every function, flag and config key you call.
@@ -91,4 +92,5 @@ The maintainer comments `/review` on a PR to ask for a fresh round without a pus
 make setup                  # once: enable git hooks
 make ci                     # full local gate, same as CI
 make inbox AS=<your-id>     # shortcut for team.py inbox
+make test                   # the team tooling's own tests
 ```
