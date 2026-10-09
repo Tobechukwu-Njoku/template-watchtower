@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# The team writes without em dashes. When one of the team's Apps commits (a "[bot]"
+# author), any em dash in the message becomes a spaced hyphen. Your own commits are
+# left as you wrote them. Works with the bash 3.2 that ships on macOS.
+set -eu
+case "$(git config user.name)" in
+  *"[bot]") ;;
+  *) exit 0 ;;
+esac
+python3 - "$1" <<'PY'
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+p.write_text(re.sub("[ \\t]*\u2014[ \\t]*", " - ", p.read_text()))
+PY

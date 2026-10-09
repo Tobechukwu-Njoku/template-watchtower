@@ -42,6 +42,7 @@ Everything happens in issue and PR comments, through `team/team.py`:
 - Each comment starts with a hidden marker (`<!-- team:comment id=bruce-wayne -->`) and ends with a sign-off. The marker says which member wrote it, and it only counts when the comment comes from that member's App (see below).
 - People are addressed with a `To:` line (`To: Barbara Gordon`, `To: reviewers`, `To: maintainer`). Never @handles: those notify real GitHub users.
 - Reviews carry their verdict and findings encoded in the marker, so the gate reads them without parsing prose.
+- Nobody on the team writes em dashes: the rule is in the handbook and every brief. As a backstop, `team.py` turns any em dash into a spaced hyphen in every comment, review and PR it posts, and the `commit-msg` hook does the same in commits made by the team's Apps. Your own commits are left alone.
 - Besides the team, only you and other collaborators can address a member. Strangers' comments are ignored.
 
 **You talk to them the same way.** Comment `To: Tim Drake` on an issue or PR, or label an issue `ready` to hand it to Tim. When an agent needs you it comments `To: maintainer` and adds the `needs-maintainer` label - filter on that label to find your queue.
@@ -166,6 +167,25 @@ Check one member by hand: `scripts/watch.sh barbara-gordon; tail ~/.watchtower/l
 - **Rulesets** are only enforced on public repos or paid plans.
 - **Dependabot PRs** get no review request. Review them yourself, approve, and merge (or apply `review-override` first if you want the gate green).
 - Agents' comments come from their Apps, so GitHub notifies you as it would for any collaborator. The `needs-maintainer` label is still the quickest way to find your queue.
+
+## Testing the team
+
+```sh
+make test        # same as python3 team/tests/run_all.py; CI runs it as "Team self-test"
+```
+
+Everything runs offline, with no accounts:
+
+| Suite | What it covers |
+|---|---|
+| `team/selftest.py` | The pure logic: who counts as whom, inboxes, the gate, diffs as reviewers see them, prompts, reply parsing, Tim's permissions and clone, the em dash rule. Also the connector client against `team/tests/fake_acp.py`. |
+| `team/tests/test_token.py` | `team.py token` against a stand-in for GitHub's App API that checks each request's signature. |
+| `team/tests/test_create_apps.py` | `scripts/create-apps.py` with the browser and GitHub stubbed. |
+| `team/tests/e2e_identities.py` | Review requests, forged reviews, PRs from outside the team, and who reaches Tim, against a fake `gh` (`team/tests/fakegh/gh`). |
+| `team/tests/e2e_reviewers.py` | A reviewer's whole check-in through the fake connector: review posted, question answered, nothing left on disk. |
+| `team/tests/e2e_scheduler.py` | `scripts/watch.sh` for a reviewer and for Tim, with a stand-in Claude Code (`team/tests/fakeclaude/claude`) that records how Tim was started. |
+
+`e2e_scheduler.py` clones the repository's committed `HEAD` for Tim, so commit before running it locally. None of the suites call Gemini or Claude. To try the real thing, `python3 team/team.py context --as barbara-gordon --pr N` shows what a reviewer would be sent, without sending it.
 
 ## Free resources used or worth borrowing from
 

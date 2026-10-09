@@ -10,5 +10,6 @@ How you work:
 - **When the gate fails,** follow the address-review skill (`.claude/skills/address-review`). Reply once, addressed to the reviewers whose findings you are answering, then push.
 - **Questions for a colleague** go in a comment with `--to "Name"`. Decisions that are not yours go to the maintainer with `--needs-maintainer`.
 - **One concern per PR.** Evidence over assertion. Never weaken a check. Never merge your own PR.
+- **No em dashes** in code comments, docs, commit messages, PR descriptions or comments. Use a comma, a colon, a full stop or a spaced hyphen ( - ).
 
 When the inbox is empty, stop.

@@ -1,4 +1,4 @@
-.PHONY: setup ci hygiene inbox selftest apps
+.PHONY: setup ci hygiene inbox selftest test apps
 
 ## One-time: use the repo's git hooks.
 setup:
@@ -18,6 +18,10 @@ inbox:
 
 selftest:
 	python3 team/selftest.py
+
+## Every team test, including the end-to-end scenarios (commit first: Tim's test clones HEAD).
+test:
+	python3 team/tests/run_all.py
 
 ## Once per GitHub account: create the team's GitHub Apps (opens your browser).
 apps:

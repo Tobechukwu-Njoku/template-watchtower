@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""A stand-in for the `gh` CLI, enough for team/team.py. Serves `gh api` from a JSON
+state file ($FAKE_GH_STATE). The caller's identity comes from $FAKE_GH_AS, a key in
+state["identities"], the way a real token decides who you are."""
+import json, os, re, sys, urllib.parse
+from datetime import datetime, timezone
+
+state_path = os.environ["FAKE_GH_STATE"]
+S = json.load(open(state_path))
+args = sys.argv[1:]
+if not args or args[0] != "api":
+    sys.exit(f"fake gh: unsupported command {args}")
+args = args[1:]
+method, accept, body, path = "GET", None, None, None
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-X": method = args[i + 1]; i += 2; continue
+    if a == "-H": accept = args[i + 1].split(":", 1)[1].strip(); i += 2; continue
+    if a == "--input": body = json.load(sys.stdin); i += 2; continue
+    path = a; i += 1
+
+me = S["identities"][os.environ["FAKE_GH_AS"]]
+now = S.get("clock", "2026-10-08T12:00:00Z")
+def tick():  # every write moves the clock one second, so ordering is deterministic
+    t = datetime.strptime(S["clock"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp() + 1
+    S["clock"] = datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return S["clock"]
+
+u = urllib.parse.urlparse(path)
+q = dict(urllib.parse.parse_qsl(u.query))
+p = u.path
+repo = S["repo"]
+pref = f"/repos/{repo}"
+def out(obj): print(json.dumps(obj)); json.dump(S, open(state_path, "w"), indent=1); sys.exit(0)
+def fail(code, msg): print(f"gh: {msg} (HTTP {code})", file=sys.stderr); sys.exit(1)
+def page(items):
+    n, size = int(q.get("page", 1)), int(q.get("per_page", 30))
+    return items[(n - 1) * size: n * size]
+def user(): return {"login": me["login"], "type": me["type"]}
+
+if p == pref and method == "GET":
+    out({"full_name": repo, "pushed_at": S.get("pushed_at")})
+if p == f"{pref}/issues" and method == "GET":
+    items = sorted(S["issues"].values(), key=lambda x: x["updated_at"], reverse=q.get("direction") == "desc")
+    if q.get("state") == "open": items = [x for x in items if x["state"] == "open"]
+    out(page([dict(x, comments=len(S["comments"].get(str(x["number"]), []))) for x in items]))
+m = re.fullmatch(rf"{pref}/issues/(\d+)/comments", p)
+if m:
+    n = m.group(1)
+    if method == "GET": out(page(S["comments"].get(n, [])))
+    if method == "POST":
+        if me.get("read_only"): fail(403, "Resource not accessible by integration")
+        S["next_id"] += 1; t = tick()
+        c = {"id": S["next_id"], "body": body["body"], "user": user(), "author_association": me["association"],
+             "created_at": t, "updated_at": t, "html_url": f"https://github.com/{repo}/issues/{n}#c{S['next_id']}"}
+        S["comments"].setdefault(n, []).append(c); S["issues"][n]["updated_at"] = t; out(c)
+m = re.fullmatch(rf"{pref}/issues/comments/(\d+)", p)
+if m and method == "PATCH":
+    for cs in S["comments"].values():
+        for c in cs:
+            if c["id"] == int(m.group(1)):
+                if c["user"]["login"] != me["login"]: fail(403, "can only edit your own comment")
+                c["body"] = body["body"]; c["updated_at"] = tick(); out(c)
+    fail(404, "Not Found")
+m = re.fullmatch(rf"{pref}/issues/(\d+)/labels", p)
+if m and method == "POST":
+    iss = S["issues"][m.group(1)]
+    for name in body["labels"]:
+        if name not in [l["name"] for l in iss["labels"]]:
+            iss["labels"].append({"name": name})
+            S["events"].setdefault(m.group(1), []).append({"event": "labeled", "label": {"name": name}, "actor": user()})
+    out(iss["labels"])
+m = re.fullmatch(rf"{pref}/issues/(\d+)", p)
+if m and method == "GET": out(S["issues"][m.group(1)])
+m = re.fullmatch(rf"{pref}/issues/(\d+)/events", p)
+if m: out(page(S["events"].get(m.group(1), [])))
+m = re.fullmatch(rf"{pref}/pulls/(\d+)", p)
+if m:
+    pr = S["pulls"][m.group(1)]
+    if accept and "diff" in accept: print(pr["diff"]); sys.exit(0)
+    out(pr)
+m = re.fullmatch(rf"{pref}/pulls/(\d+)/(files|commits)", p)
+if m: out(page(S["pulls"][m.group(1)][m.group(2)]))
+m = re.fullmatch(rf"{pref}/statuses/(\w+)", p)
+if m and method == "POST":
+    if me.get("read_only"): fail(403, "Resource not accessible by integration")
+    S["statuses"].append(dict(body, sha=m.group(1), creator=me["login"])); out(body)
+fail(404, f"fake gh has no route for {method} {path}")
