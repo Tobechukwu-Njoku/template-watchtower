@@ -60,7 +60,7 @@ All coordination happens in GitHub issue and PR comments.
 1. **Issue first.** Features, behaviour changes, schema changes and large refactors start as an issue with acceptance criteria. The maintainer labels it `ready` when it is agreed.
 2. **Implementation.** Tim picks it up, comments that it is taken, branches off fresh `main` (`fix/<N>-<slug>` or `feat/<N>-<slug>`), confirms the problem, makes one focused change and runs `make ci`.
 3. **Pull request.** Opened ready for review with the template filled in. James Gordon posts a review request to the reviewers and sets `review/gate` to pending.
-4. **Review.** Each reviewer, on their next check, reads the change with `team.py context` and posts one review from their lens. Every review re-runs the gate.
+4. **Review.** On their next check, each reviewer receives the change and posts one review from their lens. Every review re-runs the gate.
 5. **Address review.** If the gate fails, Tim fixes or rebuts each blocking finding in one reply addressed to those reviewers, then pushes. The push starts the next round. Three rounds at most - then the maintainer decides.
 6. **Merge.** The maintainer approves and merges once CI and `review/gate` are green. Nobody else merges.
 

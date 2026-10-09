@@ -11,7 +11,8 @@
 # Everything runs as the member's own GitHub App: a one-hour token from
 # `team.py token` goes in GH_TOKEN, so the team never uses your personal login.
 #
-# How each member is launched comes from $WATCHTOWER_HOME/agents.json
+# Reviewers are handled by `team.py run`, one question to Gemini per review through
+# Antigravity's connector. Tim is launched from $WATCHTOWER_HOME/agents.json
 # (default ~/.watchtower/agents.json). Logs: $WATCHTOWER_HOME/logs/.
 set -u
 
@@ -33,6 +34,14 @@ GH_TOKEN="$(python3 team/team.py token --as "$id" 2>>"$log")" || exit 0
 export GH_TOKEN
 python3 team/team.py tick --as "$id" >/dev/null 2>>"$log"
 [ $? -eq 0 ] || exit 0
+
+role="$(python3 -c 'import json, sys
+print(next(m["role"] for m in json.load(open("team/config.json"))["members"] if m["id"] == sys.argv[1]))' "$id")"
+if [ "$role" = reviewer ]; then
+  echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) $id" >>"$log"
+  WATCHTOWER_AGENT="$id" python3 team/team.py run --as "$id" >>"$log" 2>&1
+  exit 0
+fi
 
 count="$(python3 team/team.py inbox --as "$id" --count 2>>"$log")"
 [ -n "$count" ] && [ "$count" -gt 0 ] || exit 0
